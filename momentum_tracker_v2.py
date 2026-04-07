@@ -8,7 +8,8 @@ import json
 # Configuration
 INPUT_FILES = [
     "market cap greater than 10000.csv",
-    "market cap greater than 20000csv.csv"
+    "market cap greater than 20000csv.csv",
+    "ind_nifty500list.csv"
 ]
 
 def update_progress(task_id, current, total, status="running", error=None):

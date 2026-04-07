@@ -88,19 +88,19 @@ def view_report(version):
 @app.route("/run_v1/<choice>", methods=["POST"])
 def run_v1(choice):
     v1_path = os.path.join(ROOT_DIR, 'momentum_tracker.py')
-    subprocess.Popen(["python3", v1_path, choice], cwd=ROOT_DIR)
+    subprocess.Popen([sys.executable, v1_path, choice], cwd=ROOT_DIR)
     return redirect(url_for('index'))
 
 @app.route("/run_v2/<choice>", methods=["POST"])
 def run_v2(choice):
     v2_path = os.path.join(ROOT_DIR, 'momentum_tracker_v2.py')
-    subprocess.Popen(["python3", v2_path, choice], cwd=ROOT_DIR)
+    subprocess.Popen([sys.executable, v2_path, choice], cwd=ROOT_DIR)
     return redirect(url_for('index'))
 
 @app.route("/run_v3/<choice>", methods=["POST"])
 def run_v3(choice):
     v3_path = os.path.join(ROOT_DIR, 'momentum_tracker_v3.py')
-    subprocess.Popen(["python3", v3_path, choice], cwd=ROOT_DIR)
+    subprocess.Popen([sys.executable, v3_path, choice], cwd=ROOT_DIR)
     return redirect(url_for('index'))
 
 HTML_TEMPLATE = """
@@ -385,24 +385,27 @@ HTML_TEMPLATE = """
                 <div class="control-card">
                     <h3>⚡ V1 CORE SCOUT</h3>
                     <div class="btn-stack">
-                        <form action="/run_v1/0" method="POST"><button type="submit" class="btn-run btn-v1">Run V1 (10k Cap)</button></form>
-                        <form action="/run_v1/1" method="POST"><button type="submit" class="btn-run btn-v1">Run V1 (20k Cap)</button></form>
+                        <form action="/run_v1/0" method="POST"><button type="submit" class="btn-run btn-v1">10k Cap</button></form>
+                        <form action="/run_v1/1" method="POST"><button type="submit" class="btn-run btn-v1">20k Cap</button></form>
+                        <form action="/run_v1/2" method="POST"><button type="submit" class="btn-run btn-v1" style="background:#1e293b">Nifty 500</button></form>
                     </div>
                 </div>
                 <!-- V2 Controls -->
                 <div class="control-card">
                     <h3>🔍 V2 ALPHA TRACKER</h3>
                     <div class="btn-stack">
-                        <form action="/run_v2/0" method="POST"><button type="submit" class="btn-run btn-v2">Run V2 (10k Cap)</button></form>
-                        <form action="/run_v2/1" method="POST"><button type="submit" class="btn-run btn-v2">Run V2 (20k Cap)</button></form>
+                        <form action="/run_v2/0" method="POST"><button type="submit" class="btn-run btn-v2">10k Cap</button></form>
+                        <form action="/run_v2/1" method="POST"><button type="submit" class="btn-run btn-v2">20k Cap</button></form>
+                        <form action="/run_v2/2" method="POST"><button type="submit" class="btn-run btn-v2" style="background:#0f172a">Nifty 500</button></form>
                     </div>
                 </div>
                 <!-- V3 Controls -->
                 <div class="control-card">
                     <h3>🚀 V3 ULTIMATE BOT</h3>
                     <div class="btn-stack">
-                        <form action="/run_v3/0" method="POST"><button type="submit" class="btn-run btn-v3">Run V3 (10k Cap)</button></form>
-                        <form action="/run_v3/1" method="POST"><button type="submit" class="btn-run btn-v3">Run V3 (20k Cap)</button></form>
+                        <form action="/run_v3/0" method="POST"><button type="submit" class="btn-run btn-v3">10k Cap</button></form>
+                        <form action="/run_v3/1" method="POST"><button type="submit" class="btn-run btn-v3">20k Cap</button></form>
+                        <form action="/run_v3/2" method="POST"><button type="submit" class="btn-run btn-v3" style="background:#1d4ed8">Nifty 500</button></form>
                     </div>
                 </div>
             </div>

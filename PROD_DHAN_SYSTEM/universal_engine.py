@@ -1,49 +1,65 @@
-import yfinance as yf
+import os
+import json
 import time
-import datetime
+import yfinance as yf
+from apscheduler.schedulers.background import BackgroundScheduler
 
 class UniversalEngine:
-    """
-    Free and reliable market data engine using yfinance 
-    with a built-in throttle for maximum stability.
-    """
     def __init__(self, delay=0.5):
-        self.delay = delay # Throttle delay in seconds
+        self.delay = delay
+        self.cache_file = os.path.join(os.path.dirname(__file__), '..', 'portfolio_cache.json')
+        
+        # Start background updater
+        self.scheduler = BackgroundScheduler()
+        self.scheduler.add_job(self.update_cache, 'interval', minutes=5)
+        self.scheduler.start()
 
     def get_market_quote(self, symbols):
-        """
-        Fetch LTP for symbols one by one with a delay.
-        """
+        """Returns data from cache instantly."""
+        if os.path.exists(self.cache_file):
+            with open(self.cache_file, 'r') as f:
+                try:
+                    return json.load(f)
+                except:
+                    pass
+        
+        # If cache doesn't exist, trigger one update and return empty
+        return {}
+
+    def update_cache(self):
+        """The actual fetching logic (runs in background)"""
+        from PROD_DHAN_SYSTEM.master_dashboard import get_tracked_stocks
+        stocks = get_tracked_stocks()
+        if not stocks: return
+        
+        symbols = [s['symbol'] for s in stocks]
         quotes = {}
-        print(f"🔄 Universal Engine: Fetching {len(symbols)} quotes with {self.delay}s delay...")
+        print(f"🔄 Background Refresh: Fetching {len(symbols)} quotes...")
         
         for symbol in symbols:
-            # Standardize symbol for NSE if needed
             ticker_symbol = symbol if symbol.endswith(".NS") else f"{symbol}.NS"
-            
             try:
-                # Fetch only the latest price (period=1d, interval=1m)
                 ticker = yf.Ticker(ticker_symbol)
                 data = ticker.fast_info
-                
-                # Use fast_info for minimal latency
                 ltp = data.get('last_price')
+                prev_close = data.get('previous_close')
                 
+                day_change = 0.0
+                if ltp and prev_close:
+                    day_change = round(((ltp / prev_close) - 1) * 100, 2)
+
                 if ltp:
-                    quotes[symbol] = round(float(ltp), 2)
-                    # print(f"✅ {symbol}: {quotes[symbol]}")
-                else:
-                    # Fallback for manual data check
-                    hist = ticker.history(period="1d", interval="1m")
-                    if not hist.empty:
-                        quotes[symbol] = round(float(hist['Close'].iloc[-1]), 2)
-            except Exception as e:
-                print(f"⚠️ Warning: Could not fetch {symbol}: {e}")
-            
-            # THE IMPORTANT BIT: The 0.5s Throttle
+                    quotes[symbol] = {
+                        "ltp": round(float(ltp), 2),
+                        "day_change": day_change
+                    }
+            except:
+                pass
             time.sleep(self.delay)
 
-        return quotes
+        with open(self.cache_file, 'w') as f:
+            json.dump(quotes, f)
+        print("✅ Cache updated successfully.")
 
 # Singleton instance
 engine = UniversalEngine(delay=0.5)

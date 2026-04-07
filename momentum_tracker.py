@@ -18,7 +18,7 @@ def process_file(file_path):
     df['Symbol'] = df['Symbol'].str.replace('"', '').str.strip()
     symbols = [f"{s}.NS" for s in df['Symbol'].tolist() if pd.notna(s)]
     
-    # Momentum timeframes (for scoring)
+    # Momentum timeframes (for scoring - FROZEN at 10)
     timeframes = {
         '1w': 7, '2w': 14, '3w': 21, '4w': 28,
         '1m': 30, '2m': 60, '3m': 90, '6m': 180, '9m': 270,
@@ -49,7 +49,6 @@ def process_file(file_path):
             
             # 1. Calculate 1-Day Change (Not in Momentum Score)
             try:
-                # Compare latest close with previous close
                 prev_price = all_data[symbol].iloc[-2]
                 if pd.notna(prev_price) and prev_price != 0:
                     row['1d'] = round(((curr_price / prev_price) - 1) * 100, 2)
@@ -58,7 +57,7 @@ def process_file(file_path):
             except:
                 row['1d'] = "N/A"
 
-            # 2. Calculate Momentum Score (1w to 1y)
+            # 2. Calculate Momentum Score (FROZEN: 1w to 1y only)
             green_count = 0
             one_year_return = 0
             for label, days in timeframes.items():
@@ -76,7 +75,7 @@ def process_file(file_path):
                 except:
                     row[label] = "N/A"
             
-            # 3. Category Logic (Back to 10-point scale)
+            # 3. Category Logic (FROZEN: 10-point scale)
             category = "Other"
             if one_year_return > 15:
                 if green_count == 10:
@@ -99,17 +98,18 @@ def generate_html(df, output_file="momentum_report.html"):
         print("No data to generate report.")
         return
 
-    # Column order: 1d is present but Score is out of 10
+    # Exact column order as requested: 1d next to 1w
     cols = ['Symbol', 'Category', 'Score', 'Current Price', '1d', '1w', '2w', '3w', '4w', '1m', '2m', '3m', '6m', '9m', '1y']
-    df = df[cols]
+    df_display = df[cols]
 
-    headers = "".join(f"<th>{col}</th>" for col in df.columns)
+    headers = "".join(f"<th>{col}</th>" for col in cols)
     rows = ""
-    for _, row in df.iterrows():
+    for _, row in df_display.iterrows():
         row_html = "<tr>"
-        for i, col_name in enumerate(df.columns):
+        for i, col_name in enumerate(cols):
             val = row[col_name]
             cls = ""
+            # Apply color to all percentage columns (Starting from index 4: 1d)
             if i >= 4 and isinstance(val, (int, float)):
                 if val > 0: cls = "positive"
                 elif val < 0: cls = "negative"
@@ -131,6 +131,7 @@ def generate_html(df, output_file="momentum_report.html"):
         <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/1.11.5/css/jquery.dataTables.css">
         <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/fixedheader/3.2.2/css/fixedHeader.dataTables.min.css">
         <style>
+            :root {{ --primary: #3182ce; --success: #2f855a; --danger: #c53030; }}
             body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 20px; background-color: #f0f2f5; }}
             .container {{ background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }}
             h2 {{ color: #1a202c; text-align: center; margin-bottom: 10px; }}
@@ -138,36 +139,51 @@ def generate_html(df, output_file="momentum_report.html"):
             
             .filter-group {{ display: flex; justify-content: center; gap: 10px; margin-bottom: 25px; flex-wrap: wrap; }}
             .filter-btn {{ padding: 10px 18px; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; transition: all 0.2s; background: #edf2f7; color: #4a5568; }}
-            .filter-btn:hover {{ background: #e2e8f0; }}
-            .filter-btn.active {{ background: #3182ce; color: white; }}
+            .filter-btn.active {{ background: var(--primary); color: white; }}
             
-            .positive {{ color: #2f855a !important; font-weight: bold; }}
-            .negative {{ color: #c53030 !important; font-weight: bold; }}
+            .positive {{ color: var(--success) !important; font-weight: bold; }}
+            .negative {{ color: var(--danger) !important; font-weight: bold; }}
             
-            .cat-pure {{ background-color: #c6f6d5 !important; color: #22543d !important; font-weight: bold; border-radius: 4px; }}
+            .cat-pure {{ background-color: #c6f6d5 !important; color: #22543d !important; font-weight: bold; }}
             .cat-strong {{ background-color: #bee3f8 !important; color: #2a4365 !important; font-weight: bold; }}
             .cat-improving {{ background-color: #feebc8 !important; color: #744210 !important; font-weight: bold; }}
             
-            table.dataTable thead th {{ background-color: #2d3748 !important; color: white !important; padding: 12px 10px !important; }}
+            /* Clean Headers - No Messy Arrows */
+            table.dataTable thead th {{ 
+                background-color: #2d3748 !important; 
+                color: white !important; 
+                padding: 12px 10px !important; 
+                border: none !important;
+                position: relative;
+                cursor: pointer;
+            }}
+            table.dataTable thead th.sorting:before, 
+            table.dataTable thead th.sorting:after,
+            table.dataTable thead th.sorting_asc:before,
+            table.dataTable thead th.sorting_asc:after,
+            table.dataTable thead th.sorting_desc:before,
+            table.dataTable thead th.sorting_desc:after {{ display: none !important; }}
+            
+            table.dataTable thead th.sorting_asc {{ border-bottom: 3px solid #63b3ed !important; }}
+            table.dataTable thead th.sorting_desc {{ border-bottom: 3px solid #63b3ed !important; }}
+            
             table.dataTable tbody td {{ padding: 10px !important; border-bottom: 1px solid #edf2f7; }}
         </style>
     </head>
     <body>
         <div class="container">
             <h2>NSE Momentum Dashboard Pro</h2>
-            <div class="subtitle">Updated: {date} | Criteria: 1Y Return > 15% for Featured Categories</div>
+            <div class="subtitle">Updated: {date} | 10-Point Score (1W-1Y) | 1D View Added</div>
             
             <div class="filter-group">
                 <button class="filter-btn active" onclick="filterTable('all', this)">All Stocks</button>
-                <button class="filter-btn" onclick="filterTable('Pure', this)" style="border-left: 4px solid #2f855a">🌟 Pure Momentum (10/10)</button>
-                <button class="filter-btn" onclick="filterTable('Strong', this)" style="border-left: 4px solid #3182ce">💪 Strong (9/10)</button>
-                <button class="filter-btn" onclick="filterTable('Improving', this)" style="border-left: 4px solid #dd6b20">📈 Improving (8/10)</button>
+                <button class="filter-btn" onclick="filterTable('Pure', this)">🌟 Pure Momentum (10/10)</button>
+                <button class="filter-btn" onclick="filterTable('Strong', this)">💪 Strong (9/10)</button>
+                <button class="filter-btn" onclick="filterTable('Improving', this)">📈 Improving (8/10)</button>
             </div>
 
             <table id="momentumTable" class="display" style="width:100%">
-                <thead>
-                    <tr>{headers}</tr>
-                </thead>
+                <thead><tr>{headers}</tr></thead>
                 <tbody>{rows}</tbody>
             </table>
         </div>

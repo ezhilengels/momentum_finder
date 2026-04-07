@@ -14,11 +14,6 @@ app = Flask(__name__)
 # Paths to frozen assets in the root folder
 ROOT_DIR = os.path.join(os.path.dirname(__file__), '..')
 STOCKS_FILE = os.path.join(ROOT_DIR, 'portfolio_stocks.json')
-REPORTS = {
-    "v1": os.path.join(ROOT_DIR, 'momentum_report.html'),
-    "v2": os.path.join(ROOT_DIR, 'momentum_report_v2.html'),
-    "v3": os.path.join(ROOT_DIR, 'momentum_report_v3.html')
-}
 
 def get_tracked_stocks():
     if not os.path.exists(STOCKS_FILE): return []
@@ -38,7 +33,11 @@ def get_portfolio_data():
     for s in stocks:
         symbol = s['symbol']
         fixed_val = float(s['fixed_value'])
-        cmp = quotes.get(symbol, "N/A")
+        
+        # Safely get data from engine output
+        data = quotes.get(symbol, {})
+        cmp = data.get("ltp", "N/A")
+        day_change = data.get("day_change", 0.0)
         
         pl_percent = 0.0
         if isinstance(cmp, (int, float)):
@@ -48,83 +47,239 @@ def get_portfolio_data():
             "symbol": symbol,
             "fixed_value": fixed_val,
             "cmp": cmp,
+            "day_change": day_change,
             "pl_percent": pl_percent
         })
     return results
 
 @app.route("/")
 def index():
-    portfolio = get_portfolio_data()
-    return render_template_string(HTML_TEMPLATE, portfolio=portfolio, current_tab='portfolio', now=datetime.now())
+    try:
+        portfolio = get_portfolio_data()
+        return render_template_string(HTML_TEMPLATE, portfolio=portfolio, current_tab='portfolio', now=datetime.now())
+    except Exception as e:
+        return f"<html><body><h1>⚠️ Dashboard Error</h1><p>{str(e)}</p><a href='/'>Try Refreshing</a></body></html>"
 
 @app.route("/report/<version>")
 def view_report(version):
-    # This serves the actual frozen HTML reports
     filename = f"momentum_report_{version}.html" if version != "v1" else "momentum_report.html"
     return send_from_directory(ROOT_DIR, filename)
 
 @app.route("/run_v3", methods=["POST"])
 def run_v3():
-    # Execute the frozen V3 script in the background from the ROOT directory
     v3_path = os.path.join(ROOT_DIR, 'momentum_tracker_v3.py')
-    
-    # We use 'cwd=ROOT_DIR' so the script can find your CSV files and buffett.py
     subprocess.Popen(["python3", v3_path], cwd=ROOT_DIR)
-    
     return redirect(url_for('index'))
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Master Control Center</title>
+    <title>Master Portfolio | Terminal</title>
     <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/1.11.5/css/jquery.dataTables.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        body { font-family: 'Segoe UI', sans-serif; margin: 0; background: #f0f2f5; }
+        :root {
+            --primary: #0066ff;
+            --bg: #f8fafc;
+            --card-bg: #ffffff;
+            --text-main: #1e293b;
+            --text-muted: #64748b;
+            --success: #10b981;
+            --danger: #ef4444;
+            --border: #e2e8f0;
+        }
+
+        body { 
+            font-family: 'Inter', sans-serif; 
+            margin: 0; 
+            background: var(--bg); 
+            color: var(--text-main);
+            -webkit-font-smoothing: antialiased;
+        }
         
-        /* Top Navigation Styling */
-        .top-nav { background: #2d3436; color: white; padding: 10px 30px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 2px 10px rgba(0,0,0,0.2); }
-        .nav-links { display: flex; gap: 15px; }
-        .nav-btn { padding: 8px 16px; background: #3d4648; border: none; color: white; cursor: pointer; border-radius: 4px; text-decoration: none; font-size: 14px; transition: 0.3s; }
-        .nav-btn:hover { background: #0984e3; }
-        .nav-btn.active { background: #0984e3; font-weight: bold; }
+        /* Premium Top Nav */
+        .top-nav { 
+            background: #0f172a; 
+            color: white; 
+            padding: 0 40px; 
+            height: 64px;
+            display: flex; 
+            align-items: center; 
+            justify-content: space-between; 
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-weight: 700;
+            font-size: 18px;
+            letter-spacing: -0.5px;
+        }
+
+        .nav-links { display: flex; height: 100%; }
         
-        .main { padding: 20px; }
-        .card { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); border: 1px solid #e1e4e8; }
-        h1 { color: #2d3436; margin-top: 0; font-size: 22px; }
+        .nav-btn { 
+            display: flex;
+            align-items: center;
+            padding: 0 20px; 
+            color: #94a3b8; 
+            cursor: pointer; 
+            text-decoration: none; 
+            font-size: 14px; 
+            font-weight: 500;
+            transition: all 0.2s;
+            border-bottom: 2px solid transparent;
+        }
+
+        .nav-btn:hover { color: white; background: rgba(255,255,255,0.05); }
+        .nav-btn.active { 
+            color: white; 
+            border-bottom: 2px solid var(--primary);
+            background: rgba(0, 102, 255, 0.1);
+        }
         
-        /* Table Colors */
-        .positive { color: #27ae60 !important; font-weight: bold; }
-        .negative { color: #d63031 !important; font-weight: bold; }
+        .main { padding: 32px 40px; }
         
-        .action-bar { margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; border: 1px solid #eee; }
-        iframe { width: 100%; height: calc(100vh - 100px); border: none; border-radius: 8px; background: white; margin-top: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+        /* Modern Card Styling */
+        .card { 
+            background: var(--card-bg); 
+            padding: 32px; 
+            border-radius: 16px; 
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1), 0 1px 2px rgba(0,0,0,0.06);
+            border: 1px solid var(--border); 
+        }
+
+        .header-flex {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            margin-bottom: 24px;
+        }
+
+        h1 { font-size: 24px; font-weight: 700; margin: 0; color: var(--text-main); letter-spacing: -0.5px; }
         
-        /* DataTables Customization */
-        .dataTables_wrapper { margin-top: 20px; }
-        table.dataTable thead th { background: #f8f9fa; border-bottom: 2px solid #dee2e6; color: #444; }
+        /* P&L Colors */
+        .positive { color: var(--success) !important; font-weight: 600; }
+        .negative { color: var(--danger) !important; font-weight: 600; }
+        
+        .badge {
+            padding: 4px 10px;
+            border-radius: 9999px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        .badge-live { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 14px;
+            cursor: pointer;
+            transition: transform 0.1s, opacity 0.2s;
+            box-shadow: 0 4px 6px -1px rgba(0, 102, 255, 0.2);
+        }
+        .btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
+        .btn-primary:active { transform: translateY(0); }
+
+        /* DataTables Custom Polish */
+        .dataTables_wrapper .dataTables_filter input {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px 12px;
+            margin-left: 12px;
+            outline: none;
+        }
+        table.dataTable { border-collapse: collapse !important; border: none !important; }
+        table.dataTable thead th { 
+            background: #f1f5f9 !important; 
+            color: var(--text-muted) !important; 
+            font-weight: 600 !important;
+            text-transform: uppercase;
+            font-size: 11px;
+            letter-spacing: 0.05em;
+            padding: 16px !important;
+            border: none !important;
+            position: relative;
+        }
+        /* Remove default DataTables arrows and add custom clean ones */
+        table.dataTable thead th.sorting:before, 
+        table.dataTable thead th.sorting:after,
+        table.dataTable thead th.sorting_asc:before,
+        table.dataTable thead th.sorting_asc:after,
+        table.dataTable thead th.sorting_desc:before,
+        table.dataTable thead th.sorting_desc:after { display: none !important; }
+        
+        table.dataTable thead th.sorting { cursor: pointer; }
+        table.dataTable thead th.sorting_asc { border-bottom: 2px solid var(--primary) !important; color: var(--primary) !important; }
+        table.dataTable thead th.sorting_desc { border-bottom: 2px solid var(--primary) !important; color: var(--primary) !important; }
+
+        table.dataTable tbody td { 
+            padding: 16px !important; 
+            border-bottom: 1px solid #f1f5f9 !important;
+            font-size: 14px;
+        }
+        table.dataTable tbody tr:hover { background-color: #f8fafc !important; }
+
+        iframe { 
+            width: 100%; 
+            height: calc(100vh - 120px); 
+            border: none; 
+            border-radius: 16px; 
+            background: white; 
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+
+        .footer-info {
+            margin-top: 24px;
+            padding-top: 20px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            font-size: 13px;
+            color: var(--text-muted);
+        }
     </style>
 </head>
 <body>
-    <div class="top-nav">
-        <h2 style="margin:0; font-size: 18px;">🚀 Master Dashboard</h2>
-        <div class="nav-links">
-            <a href="/" class="nav-btn {{ 'active' if current_tab == 'portfolio' else '' }}">📊 Live Portfolio</a>
-            <a href="/report/v1" target="view_frame" class="nav-btn">📈 V1 Momentum</a>
-            <a href="/report/v2" target="view_frame" class="nav-btn">🔥 V2 Strong</a>
-            <a href="/report/v3" target="view_frame" class="nav-btn">💎 V3 Ultimate</a>
+    <nav class="top-nav">
+        <div class="brand">
+            <span style="font-size: 24px;">📊</span>
+            <span>PORTFOLIO TERMINAL</span>
         </div>
-        <div id="clock" style="font-size: 14px; color: #ccc;">{{ now.strftime('%Y-%m-%d %H:%M:%S') }}</div>
-    </div>
+        <div class="nav-links">
+            <a href="/" class="nav-btn {{ 'active' if current_tab == 'portfolio' else '' }}">Live Portfolio</a>
+            <a href="/report/v1" target="view_frame" class="nav-btn">V1 Momentum</a>
+            <a href="/report/v2" target="view_frame" class="nav-btn">V2 Strong</a>
+            <a href="/report/v3" target="view_frame" class="nav-btn">V3 Ultimate</a>
+        </div>
+        <div style="display: flex; align-items: center; gap: 16px;">
+            <div id="clock" style="font-family: monospace; font-weight: 600; color: #94a3b8;">{{ now.strftime('%H:%M:%S') }}</div>
+            <div class="badge badge-live">● System Live</div>
+        </div>
+    </nav>
     
     <div class="main">
         <div id="content-area">
             <div id="portfolio-view" class="card">
-                <div style="display:flex; justify-content: space-between; align-items: center;">
-                    <h1>Live Portfolio (Free Engine)</h1>
+                <div class="header-flex">
+                    <div>
+                        <h1>Real-time Holdings</h1>
+                        <p style="color: var(--text-muted); margin: 4px 0 0 0; font-size: 14px;">Tracking 1-day change and total portfolio P&L</p>
+                    </div>
                     <form action="/run_v3" method="POST" style="margin:0;">
-                        <button type="submit" style="background:#0984e3; color:white; padding:10px 20px; border:none; border-radius:6px; cursor:pointer; font-weight: bold;">
-                            🚀 Run V3 Analysis
+                        <button type="submit" class="btn-primary">
+                            🚀 Run Global Analysis
                         </button>
                     </form>
                 </div>
@@ -132,29 +287,33 @@ HTML_TEMPLATE = """
                 <table id="portfolioTable" class="display nowrap" style="width:100%">
                     <thead>
                         <tr>
-                            <th>Symbol</th>
-                            <th>Fixed Value</th>
-                            <th>Live CMP</th>
-                            <th>P/L %</th>
+                            <th>Ticker</th>
+                            <th>Avg Cost</th>
+                            <th>Market Price</th>
+                            <th>Day Change</th>
+                            <th>Profit / Loss</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for stock in portfolio %}
                         <tr>
-                            <td><strong>{{ stock.symbol }}</strong></td>
+                            <td style="font-weight: 700; color: var(--primary);">{{ stock.symbol }}</td>
                             <td>{{ stock.fixed_value }}</td>
-                            <td>{{ stock.cmp }}</td>
+                            <td style="font-weight: 600;">{{ stock.cmp }}</td>
+                            <td class="{{ 'positive' if stock.day_change > 0 else 'negative' }}">
+                                {{ '+' if stock.day_change > 0 }}{{ stock.day_change }}%
+                            </td>
                             <td class="{{ 'positive' if stock.pl_percent > 0 else 'negative' }}" data-order="{{ stock.pl_percent }}">
-                                {{ stock.pl_percent }}%
+                                {{ '+' if stock.pl_percent > 0 }}{{ stock.pl_percent }}%
                             </td>
                         </tr>
                         {% endfor %}
                     </tbody>
                 </table>
                 
-                <div class="action-bar">
-                    <span style="font-size: 13px; color: #666;">ℹ️ Live prices updated via Universal Engine (0.5s throttle)</span>
-                    <span style="font-weight: bold; color: #2d3436;">Last Refresh: {{ now.strftime('%H:%M:%S') }}</span>
+                <div class="footer-info">
+                    <span>Throttled Engine: 500ms delay per request for stability.</span>
+                    <span>Last Refreshed: <strong>{{ now.strftime('%d %b, %H:%M') }}</strong></span>
                 </div>
             </div>
             
@@ -168,8 +327,12 @@ HTML_TEMPLATE = """
         $(document).ready( function () {
             $('#portfolioTable').DataTable({
                 "pageLength": 50,
-                "order": [[3, "desc"]], // Default sort by P/L % descending
-                "dom": '<"top"f>rt<"bottom"lp><"clear">'
+                "order": [[4, "desc"]],
+                "dom": '<"header-flex"f>rt<"footer-info"lp><"clear">',
+                "language": {
+                    "search": "",
+                    "searchPlaceholder": "Search tickers..."
+                }
             });
         });
 

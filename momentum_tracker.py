@@ -264,13 +264,16 @@ if __name__ == "__main__":
         except:
             pass
             
+    task_id = f"v1_{choice}"
     if 0 <= choice < len(INPUT_FILES):
         selected_file = INPUT_FILES[choice]
         if os.path.exists(selected_file):
             print(f"Running V1 Analysis on {selected_file}...")
-            results_df = process_file(selected_file)
+            results_df = process_file(selected_file, task_id)
             generate_html(results_df)
+            update_progress(task_id, 100, 100, "completed")
         else:
+            update_progress(task_id, 0, 0, "error", f"File {selected_file} not found")
             print(f"Error: {selected_file} not found.")
     else:
         print("Invalid choice index.")

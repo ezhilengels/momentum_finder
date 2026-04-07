@@ -3,6 +3,7 @@ import yfinance as yf
 from tqdm import tqdm
 import datetime
 import os
+import json
 
 # Configuration
 INPUT_FILES = [
@@ -10,7 +11,26 @@ INPUT_FILES = [
     "market cap greater than 20000csv.csv"
 ]
 
-def process_file(file_path):
+def update_progress(task_id, current, total, status="running", error=None):
+    progress_file = "progress.json"
+    data = {}
+    if os.path.exists(progress_file):
+        try:
+            with open(progress_file, "r") as f:
+                data = json.load(f)
+        except: pass
+    
+    data[task_id] = {
+        "current": current,
+        "total": total,
+        "status": status,
+        "error": error,
+        "time": datetime.datetime.now().strftime('%H:%M:%S')
+    }
+    with open(progress_file, "w") as f:
+        json.dump(data, f)
+
+def process_file(file_path, task_id="v1"):
     print(f"\nProcessing {file_path}...")
     df = pd.read_csv(file_path)
     
@@ -26,18 +46,28 @@ def process_file(file_path):
     }
     
     # Fetch data
-    print(f"Fetching historical data for {len(symbols)} symbols...")
-    all_data = yf.download(symbols, period="14mo", interval="1d", progress=True)['Close']
+    total = len(symbols)
+    update_progress(task_id, 0, total, "downloading")
+    print(f"Fetching historical data for {total} symbols...")
+    try:
+        all_data = yf.download(symbols, period="14mo", interval="1d", progress=True)['Close']
+    except Exception as e:
+        update_progress(task_id, 0, total, "error", str(e))
+        return pd.DataFrame()
     
     if all_data.empty:
+        update_progress(task_id, 0, total, "error", "No data available")
         print("Error: Could not fetch data.")
         return pd.DataFrame()
 
     results = []
     current_prices = all_data.iloc[-1]
     
-    for symbol in tqdm(symbols, desc="Analyzing Momentum"):
+    for i, symbol in enumerate(tqdm(symbols, desc="Analyzing Momentum")):
         try:
+            if i % 10 == 0:
+                update_progress(task_id, i, total, "analyzing")
+            
             if symbol not in all_data.columns:
                 continue
                 
@@ -167,6 +197,9 @@ def generate_html(df, output_file="momentum_report.html"):
             table.dataTable thead th.sorting_asc {{ border-bottom: 3px solid #63b3ed !important; }}
             table.dataTable thead th.sorting_desc {{ border-bottom: 3px solid #63b3ed !important; }}
             
+            table.dataTable thead th.sorting_asc::after {{ content: " ↑"; }}
+            table.dataTable thead th.sorting_desc::after {{ content: " ↓"; }}
+            
             table.dataTable tbody td {{ padding: 10px !important; border-bottom: 1px solid #edf2f7; }}
         </style>
     </head>
@@ -221,16 +254,22 @@ def generate_html(df, output_file="momentum_report.html"):
     print(f"\nDashboard generated: {output_file}")
 
 if __name__ == "__main__":
-    print("Choose input file:")
-    for i, f in enumerate(INPUT_FILES):
-        if os.path.exists(f): print(f"{i+1}. {f}")
-        else: print(f"{i+1}. {f} (File not found)")
-    
-    try:
-        choice = int(input("Enter choice (1/2): ")) - 1
+    import sys
+    # Default to 20000 (index 1) if no argument provided
+    choice = 1
+    if len(sys.argv) > 1:
+        try:
+            choice = int(sys.argv[1])
+        except:
+            pass
+            
+    if 0 <= choice < len(INPUT_FILES):
         selected_file = INPUT_FILES[choice]
         if os.path.exists(selected_file):
+            print(f"Running V1 Analysis on {selected_file}...")
             results_df = process_file(selected_file)
             generate_html(results_df)
-    except:
-        print("Invalid choice.")
+        else:
+            print(f"Error: {selected_file} not found.")
+    else:
+        print("Invalid choice index.")

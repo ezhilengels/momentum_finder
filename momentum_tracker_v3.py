@@ -3,6 +3,7 @@ import yfinance as yf
 from tqdm import tqdm
 import datetime
 import os
+import json
 import buffett
 import config
 
@@ -11,6 +12,25 @@ INPUT_FILES = [
     "market cap greater than 10000.csv",
     "market cap greater than 20000csv.csv"
 ]
+
+def update_progress(task_id, current, total, status="running", error=None):
+    progress_file = "progress.json"
+    data = {}
+    if os.path.exists(progress_file):
+        try:
+            with open(progress_file, "r") as f:
+                data = json.load(f)
+        except: pass
+    
+    data[task_id] = {
+        "current": current,
+        "total": total,
+        "status": status,
+        "error": error,
+        "time": datetime.datetime.now().strftime('%H:%M:%S')
+    }
+    with open(progress_file, "w") as f:
+        json.dump(data, f)
 
 def get_fundamental_data(ticker_obj, current_price):
     """Fetch data needed for buffett.py valuation."""
@@ -57,7 +77,7 @@ def get_fundamental_data(ticker_obj, current_price):
     except Exception:
         return None
 
-def process_file(file_path):
+def process_file(file_path, task_id="v3"):
     print(f"\nProcessing {file_path} (V3 Ultimate Value + Momentum)...")
     df = pd.read_csv(file_path)
     
@@ -70,10 +90,17 @@ def process_file(file_path):
         '1y': 365, '2y': 730, '3y': 1095, '4y': 1460, '5y': 1825
     }
     
-    print(f"Fetching 6 years of historical data for {len(symbols)} symbols...")
-    all_data = yf.download(symbols, period="6y", interval="1d", progress=True)['Close']
+    total = len(symbols)
+    update_progress(task_id, 0, total, "downloading")
+    print(f"Fetching 6 years of historical data for {total} symbols...")
+    try:
+        all_data = yf.download(symbols, period="6y", interval="1d", progress=True)['Close']
+    except Exception as e:
+        update_progress(task_id, 0, total, "error", str(e))
+        return pd.DataFrame()
     
     if all_data.empty:
+        update_progress(task_id, 0, total, "error", "No price data")
         print("Error: Could not fetch price data.")
         return pd.DataFrame()
 
@@ -83,8 +110,11 @@ def process_file(file_path):
     # We use yf.Tickers for fundamental data
     tickers_dict = yf.Tickers(" ".join(symbols)).tickers
     
-    for symbol in tqdm(symbols, desc="V3 Deep Analysis"):
+    for i, symbol in enumerate(tqdm(symbols, desc="V3 Deep Analysis")):
         try:
+            if i % 2 == 0: # Update more often for V3 since it's slow
+                update_progress(task_id, i, total, "analyzing")
+            
             if symbol not in all_data.columns:
                 continue
                 
@@ -222,7 +252,18 @@ def generate_html(df, output_file="momentum_report_v3.html"):
             .cat-garp {{ background-color: #e3f2fd !important; color: #1565c0 !important; font-weight: bold; }}
             .cat-value {{ background-color: #f1f8e9 !important; color: #33691e !important; font-weight: bold; }}
             
-            table.dataTable thead th {{ background-color: #2d3436 !important; color: white !important; }}
+            table.dataTable thead th {{ background-color: #2d3436 !important; color: white !important; position: relative; cursor: pointer; }}
+            
+            /* Show only one arrow for sorting */
+            table.dataTable thead th.sorting:before, 
+            table.dataTable thead th.sorting:after,
+            table.dataTable thead th.sorting_asc:before,
+            table.dataTable thead th.sorting_asc:after,
+            table.dataTable thead th.sorting_desc:before,
+            table.dataTable thead th.sorting_desc:after {{ display: none !important; }}
+            
+            table.dataTable thead th.sorting_asc::after {{ content: " ↑"; }}
+            table.dataTable thead th.sorting_desc::after {{ content: " ↓"; }}
             
             /* Freeze Symbol Column */
             th:first-child, td:first-child {{ position: sticky; left: 0; background-color: #fff !important; z-index: 10; border-right: 2px solid #dfe6e9 !important; }}
@@ -290,17 +331,25 @@ def generate_html(df, output_file="momentum_report_v3.html"):
     print(f"\nDashboard V3 generated: {output_file}")
 
 if __name__ == "__main__":
-    print("V3 - The Ultimate Value + Momentum Screener")
-    print("Note: This bot performs deep valuation and may take 10-15 minutes.")
-    print("Choose input file:")
-    for i, f in enumerate(INPUT_FILES):
-        if os.path.exists(f):
-            print(f"{i+1}. {f}")
-    
-    try:
-        choice = int(input("Enter choice (1/2): ")) - 1
+    import sys
+    # Default to 20000 (index 1) if no argument provided
+    choice = 1
+    if len(sys.argv) > 1:
+        try:
+            choice = int(sys.argv[1])
+        except:
+            pass
+            
+    task_id = f"v3_{choice}"
+    if 0 <= choice < len(INPUT_FILES):
         selected_file = INPUT_FILES[choice]
-        results_df = process_file(selected_file)
-        generate_html(results_df)
-    except Exception as e:
-        print(f"Error: {e}")
+        if os.path.exists(selected_file):
+            print(f"Running V3 Analysis on {selected_file}...")
+            results_df = process_file(selected_file, task_id)
+            generate_html(results_df)
+            update_progress(task_id, 100, 100, "completed")
+        else:
+            update_progress(task_id, 0, 0, "error", f"File {selected_file} not found")
+            print(f"Error: {selected_file} not found.")
+    else:
+        print("Invalid choice index.")

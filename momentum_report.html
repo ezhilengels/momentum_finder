@@ -42,13 +42,16 @@
             table.dataTable thead th.sorting_asc { border-bottom: 3px solid #63b3ed !important; }
             table.dataTable thead th.sorting_desc { border-bottom: 3px solid #63b3ed !important; }
             
+            table.dataTable thead th.sorting_asc::after { content: " ↑"; }
+            table.dataTable thead th.sorting_desc::after { content: " ↓"; }
+            
             table.dataTable tbody td { padding: 10px !important; border-bottom: 1px solid #edf2f7; }
         </style>
     </head>
     <body>
         <div class="container">
             <h2>NSE Momentum Dashboard Pro</h2>
-            <div class="subtitle">Updated: 2026-04-07 18:47 | 10-Point Score (1W-1Y) | 1D View Added</div>
+            <div class="subtitle">Updated: 2026-04-07 20:05 | 10-Point Score (1W-1Y) | 1D View Added</div>
             
             <div class="filter-group">
                 <button class="filter-btn active" onclick="filterTable('all', this)">All Stocks</button>

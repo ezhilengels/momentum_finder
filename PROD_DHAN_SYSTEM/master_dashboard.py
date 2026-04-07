@@ -13,6 +13,13 @@ app = Flask(__name__)
 
 # Paths to frozen assets in the root folder
 ROOT_DIR = os.path.join(os.path.dirname(__file__), '..')
+PROGRESS_FILE = os.path.join(ROOT_DIR, 'progress.json')
+
+# Initialize progress file
+if not os.path.exists(PROGRESS_FILE):
+    with open(PROGRESS_FILE, "w") as f:
+        json.dump({}, f)
+
 STOCKS_FILE = os.path.join(ROOT_DIR, 'portfolio_stocks.json')
 
 def get_tracked_stocks():
@@ -56,7 +63,20 @@ def get_portfolio_data():
 def index():
     try:
         portfolio = get_portfolio_data()
-        return render_template_string(HTML_TEMPLATE, portfolio=portfolio, current_tab='portfolio', now=datetime.now())
+        
+        # Calculate summary stats
+        total_pl = [s['pl_percent'] for s in portfolio if isinstance(s['pl_percent'], (int, float))]
+        avg_pl = round(sum(total_pl) / len(total_pl), 2) if total_pl else 0
+        
+        total_day = [s['day_change'] for s in portfolio if isinstance(s['day_change'], (int, float))]
+        avg_day = round(sum(total_day) / len(total_day), 2) if total_day else 0
+
+        return render_template_string(HTML_TEMPLATE, 
+                                     portfolio=portfolio, 
+                                     avg_pl=avg_pl, 
+                                     avg_day=avg_day,
+                                     current_tab='portfolio', 
+                                     now=datetime.now())
     except Exception as e:
         return f"<html><body><h1>⚠️ Dashboard Error</h1><p>{str(e)}</p><a href='/'>Try Refreshing</a></body></html>"
 
@@ -65,11 +85,31 @@ def view_report(version):
     filename = f"momentum_report_{version}.html" if version != "v1" else "momentum_report.html"
     return send_from_directory(ROOT_DIR, filename)
 
-@app.route("/run_v3", methods=["POST"])
-def run_v3():
+@app.route("/progress")
+def get_progress():
+    progress_file = os.path.join(ROOT_DIR, 'progress.json')
+    if os.path.exists(progress_file):
+        with open(progress_file, "r") as f:
+            return json.load(f)
+    return {}
+
+@app.route("/run_v1/<choice>", methods=["POST"])
+def run_v1(choice):
+    v1_path = os.path.join(ROOT_DIR, 'momentum_tracker.py')
+    subprocess.Popen(["python3", v1_path, choice], cwd=ROOT_DIR)
+    return {"status": "started", "task": f"v1_{choice}"}
+
+@app.route("/run_v2/<choice>", methods=["POST"])
+def run_v2(choice):
+    v2_path = os.path.join(ROOT_DIR, 'momentum_tracker_v2.py')
+    subprocess.Popen(["python3", v2_path, choice], cwd=ROOT_DIR)
+    return {"status": "started", "task": f"v2_{choice}"}
+
+@app.route("/run_v3/<choice>", methods=["POST"])
+def run_v3(choice):
     v3_path = os.path.join(ROOT_DIR, 'momentum_tracker_v3.py')
-    subprocess.Popen(["python3", v3_path], cwd=ROOT_DIR)
-    return redirect(url_for('index'))
+    subprocess.Popen(["python3", v3_path, choice], cwd=ROOT_DIR)
+    return {"status": "started", "task": f"v3_{choice}"}
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -80,14 +120,16 @@ HTML_TEMPLATE = """
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            --primary: #0066ff;
+            --primary: #2563eb;
+            --primary-light: #eff6ff;
             --bg: #f8fafc;
             --card-bg: #ffffff;
-            --text-main: #1e293b;
+            --text-main: #0f172a;
             --text-muted: #64748b;
             --success: #10b981;
             --danger: #ef4444;
             --border: #e2e8f0;
+            --nav-bg: #0f172a;
         }
 
         body { 
@@ -100,119 +142,200 @@ HTML_TEMPLATE = """
         
         /* Premium Top Nav */
         .top-nav { 
-            background: #0f172a; 
+            background: var(--nav-bg); 
             color: white; 
             padding: 0 40px; 
-            height: 64px;
+            height: 70px;
             display: flex; 
             align-items: center; 
             justify-content: space-between; 
             position: sticky;
             top: 0;
             z-index: 100;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
         }
 
         .brand {
             display: flex;
             align-items: center;
             gap: 12px;
-            font-weight: 700;
-            font-size: 18px;
-            letter-spacing: -0.5px;
+            font-weight: 800;
+            font-size: 20px;
+            letter-spacing: -0.025em;
         }
 
-        .nav-links { display: flex; height: 100%; }
+        .nav-links { display: flex; height: 100%; margin-left: 40px; }
         
         .nav-btn { 
             display: flex;
             align-items: center;
-            padding: 0 20px; 
+            padding: 0 24px; 
             color: #94a3b8; 
             cursor: pointer; 
             text-decoration: none; 
             font-size: 14px; 
-            font-weight: 500;
+            font-weight: 600;
             transition: all 0.2s;
-            border-bottom: 2px solid transparent;
+            border-bottom: 3px solid transparent;
         }
 
         .nav-btn:hover { color: white; background: rgba(255,255,255,0.05); }
         .nav-btn.active { 
             color: white; 
-            border-bottom: 2px solid var(--primary);
-            background: rgba(0, 102, 255, 0.1);
+            border-bottom: 3px solid var(--primary);
+            background: linear-gradient(to bottom, transparent, rgba(37, 99, 235, 0.1));
         }
         
-        .main { padding: 32px 40px; }
+        .main { padding: 32px 40px; max-width: 1600px; margin: 0 auto; }
         
+        /* Dashboard Summary Cards */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 24px;
+        }
+        .stat-card {
+            background: var(--card-bg);
+            padding: 20px;
+            border-radius: 16px;
+            border: 1px solid var(--border);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+        .stat-label { font-size: 12px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+        .stat-value { font-size: 24px; font-weight: 800; margin-top: 6px; }
+
+        /* Control Grid for Analysis Buttons */
+        .control-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+            margin-bottom: 32px;
+        }
+        .control-card {
+            background: white;
+            padding: 24px;
+            border-radius: 16px;
+            border: 1px solid var(--border);
+            text-align: center;
+        }
+        .control-card h3 { margin: 0 0 16px 0; font-size: 16px; font-weight: 800; color: #1e293b; }
+        .btn-stack { display: flex; flex-direction: column; gap: 10px; }
+        
+        .btn-run {
+            width: 100%;
+            padding: 12px;
+            border: none;
+            border-radius: 10px;
+            font-weight: 700;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            color: white;
+        }
+        .btn-v1 { background: #64748b; }
+        .btn-v2 { background: #334155; }
+        .btn-v3 { background: #2563eb; }
+        .btn-run:hover { transform: translateY(-2px); filter: brightness(1.1); }
+
+        /* Progress Bar Styling */
+        .progress-container {
+            margin-top: 15px;
+            background: #e2e8f0;
+            border-radius: 999px;
+            height: 8px;
+            overflow: hidden;
+            display: none;
+        }
+        .progress-bar {
+            background: #10b981;
+            height: 100%;
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+        .btn-run:disabled { opacity: 0.5; cursor: not-allowed; filter: grayscale(1); }
+        .status-text {
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--text-muted);
+            margin-top: 8px;
+            text-align: center;
+            display: none;
+        }
+        .error-text { color: var(--danger) !important; display: none; margin-top: 4px; font-size: 11px; }
+
         /* Modern Card Styling */
         .card { 
             background: var(--card-bg); 
             padding: 32px; 
-            border-radius: 16px; 
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1), 0 1px 2px rgba(0,0,0,0.06);
+            border-radius: 20px; 
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
             border: 1px solid var(--border); 
         }
 
         .header-flex {
             display: flex;
             justify-content: space-between;
-            align-items: flex-end;
-            margin-bottom: 24px;
+            align-items: center;
+            margin-bottom: 32px;
         }
 
-        h1 { font-size: 24px; font-weight: 700; margin: 0; color: var(--text-main); letter-spacing: -0.5px; }
+        h1 { font-size: 24px; font-weight: 800; margin: 0; color: var(--text-main); letter-spacing: -0.025em; }
         
-        /* P&L Colors */
-        .positive { color: var(--success) !important; font-weight: 600; }
-        .negative { color: var(--danger) !important; font-weight: 600; }
+        .positive { color: var(--success) !important; }
+        .negative { color: var(--danger) !important; }
         
         .badge {
-            padding: 4px 10px;
-            border-radius: 9999px;
+            padding: 6px 12px;
+            border-radius: 8px;
             font-size: 12px;
-            font-weight: 600;
-            text-transform: uppercase;
+            font-weight: 700;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
         }
-        .badge-live { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+        .badge-live { background: #ecfdf5; color: #059669; border: 1px solid #d1fae5; }
 
         .btn-primary {
             background: var(--primary);
             color: white;
-            padding: 10px 20px;
+            padding: 10px 18px;
             border: none;
-            border-radius: 8px;
-            font-weight: 600;
-            font-size: 14px;
+            border-radius: 10px;
+            font-weight: 700;
+            font-size: 13px;
             cursor: pointer;
-            transition: transform 0.1s, opacity 0.2s;
-            box-shadow: 0 4px 6px -1px rgba(0, 102, 255, 0.2);
+            transition: all 0.2s;
+            box-shadow: 0 4px 10px rgba(37, 99, 235, 0.2);
+            white-space: nowrap;
         }
-        .btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
-        .btn-primary:active { transform: translateY(0); }
+        .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 6px 15px rgba(37, 99, 235, 0.3); }
+
+        .run-group {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
 
         /* DataTables Custom Polish */
-        .dataTables_wrapper .dataTables_filter input {
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 8px 12px;
-            margin-left: 12px;
-            outline: none;
-        }
-        table.dataTable { border-collapse: collapse !important; border: none !important; }
+        table.dataTable { border: none !important; margin: 20px 0 !important; }
         table.dataTable thead th { 
-            background: #f1f5f9 !important; 
+            background: #f8fafc !important; 
             color: var(--text-muted) !important; 
-            font-weight: 600 !important;
+            font-weight: 700 !important;
             text-transform: uppercase;
             font-size: 11px;
-            letter-spacing: 0.05em;
-            padding: 16px !important;
-            border: none !important;
-            position: relative;
+            letter-spacing: 0.1em;
+            padding: 18px 16px !important;
+            border-bottom: 2px solid var(--border) !important;
+            text-align: left !important;
         }
-        /* Remove default DataTables arrows and add custom clean ones */
+        
+        /* Show only one arrow for sorting */
         table.dataTable thead th.sorting:before, 
         table.dataTable thead th.sorting:after,
         table.dataTable thead th.sorting_asc:before,
@@ -220,68 +343,122 @@ HTML_TEMPLATE = """
         table.dataTable thead th.sorting_desc:before,
         table.dataTable thead th.sorting_desc:after { display: none !important; }
         
-        table.dataTable thead th.sorting { cursor: pointer; }
-        table.dataTable thead th.sorting_asc { border-bottom: 2px solid var(--primary) !important; color: var(--primary) !important; }
-        table.dataTable thead th.sorting_desc { border-bottom: 2px solid var(--primary) !important; color: var(--primary) !important; }
+        table.dataTable thead th.sorting_asc::after { content: " ↑"; color: var(--primary); font-size: 14px; }
+        table.dataTable thead th.sorting_desc::after { content: " ↓"; color: var(--primary); font-size: 14px; }
 
         table.dataTable tbody td { 
             padding: 16px !important; 
             border-bottom: 1px solid #f1f5f9 !important;
             font-size: 14px;
+            font-weight: 500;
         }
-        table.dataTable tbody tr:hover { background-color: #f8fafc !important; }
+        table.dataTable tbody tr:hover { background-color: #f1f5f9 !important; cursor: pointer; }
 
         iframe { 
             width: 100%; 
-            height: calc(100vh - 120px); 
+            height: calc(100vh - 130px); 
             border: none; 
-            border-radius: 16px; 
+            border-radius: 20px; 
             background: white; 
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
         }
 
-        .footer-info {
-            margin-top: 24px;
-            padding-top: 20px;
-            border-top: 1px solid var(--border);
-            display: flex;
-            justify-content: space-between;
+        .symbol-tag {
+            background: var(--primary-light);
+            color: var(--primary);
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-weight: 700;
             font-size: 13px;
-            color: var(--text-muted);
         }
     </style>
 </head>
 <body>
     <nav class="top-nav">
-        <div class="brand">
-            <span style="font-size: 24px;">📊</span>
-            <span>PORTFOLIO TERMINAL</span>
+        <div style="display: flex; align-items: center;">
+            <div class="brand">
+                <div style="background: var(--primary); width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white;">📈</div>
+                <span>TERMINAL v4</span>
+            </div>
+            <div class="nav-links">
+                <a href="/" class="nav-btn {{ 'active' if current_tab == 'portfolio' else '' }}">Portfolio</a>
+                <a href="/report/v1" target="view_frame" class="nav-btn">V1 Core</a>
+                <a href="/report/v2" target="view_frame" class="nav-btn">V2 Alpha</a>
+                <a href="/report/v3" target="view_frame" class="nav-btn">V3 Ultimate</a>
+            </div>
         </div>
-        <div class="nav-links">
-            <a href="/" class="nav-btn {{ 'active' if current_tab == 'portfolio' else '' }}">Live Portfolio</a>
-            <a href="/report/v1" target="view_frame" class="nav-btn">V1 Momentum</a>
-            <a href="/report/v2" target="view_frame" class="nav-btn">V2 Strong</a>
-            <a href="/report/v3" target="view_frame" class="nav-btn">V3 Ultimate</a>
-        </div>
-        <div style="display: flex; align-items: center; gap: 16px;">
-            <div id="clock" style="font-family: monospace; font-weight: 600; color: #94a3b8;">{{ now.strftime('%H:%M:%S') }}</div>
-            <div class="badge badge-live">● System Live</div>
+        <div style="display: flex; align-items: center; gap: 24px;">
+            <div id="clock" style="font-family: 'JetBrains Mono', monospace; font-weight: 700; color: #94a3b8; font-size: 14px;">{{ now.strftime('%H:%M:%S') }}</div>
+            <div class="badge badge-live">● System Active</div>
         </div>
     </nav>
     
     <div class="main">
-        <div id="content-area">
-            <div id="portfolio-view" class="card">
+        <div id="portfolio-view">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label">Average P&L</div>
+                    <div class="stat-value {{ 'positive' if avg_pl > 0 else 'negative' }}">
+                        {{ '+' if avg_pl > 0 }}{{ avg_pl }}%
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Avg Day Change</div>
+                    <div class="stat-value {{ 'positive' if avg_day > 0 else 'negative' }}">
+                        {{ '+' if avg_day > 0 }}{{ avg_day }}%
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Account Health</div>
+                    <div class="stat-value" style="color: var(--primary);">EXCELLENT</div>
+                </div>
+            </div>
+
+            <div class="control-grid">
+                <!-- V1 Controls -->
+                <div class="control-card">
+                    <h3>⚡ V1 CORE SCOUT</h3>
+                    <div class="btn-stack">
+                        <button onclick="startTask('/run_v1/0', 'v1_0')" class="btn-run btn-v1">Run V1 (10k Cap)</button>
+                        <button onclick="startTask('/run_v1/1', 'v1_1')" class="btn-run btn-v1">Run V1 (20k Cap)</button>
+                    </div>
+                    <div id="prog-v1_0" class="progress-container"><div class="progress-bar"></div></div>
+                    <div id="stat-v1_0" class="status-text"></div>
+                    <div id="prog-v1_1" class="progress-container"><div class="progress-bar"></div></div>
+                    <div id="stat-v1_1" class="status-text"></div>
+                </div>
+                <!-- V2 Controls -->
+                <div class="control-card">
+                    <h3>🔍 V2 ALPHA TRACKER</h3>
+                    <div class="btn-stack">
+                        <button onclick="startTask('/run_v2/0', 'v2_0')" class="btn-run btn-v2">Run V2 (10k Cap)</button>
+                        <button onclick="startTask('/run_v2/1', 'v2_1')" class="btn-run btn-v2">Run V2 (20k Cap)</button>
+                    </div>
+                    <div id="prog-v2_0" class="progress-container"><div class="progress-bar"></div></div>
+                    <div id="stat-v2_0" class="status-text"></div>
+                    <div id="prog-v2_1" class="progress-container"><div class="progress-bar"></div></div>
+                    <div id="stat-v2_1" class="status-text"></div>
+                </div>
+                <!-- V3 Controls -->
+                <div class="control-card">
+                    <h3>🚀 V3 ULTIMATE BOT</h3>
+                    <div class="btn-stack">
+                        <button onclick="startTask('/run_v3/0', 'v3_0')" class="btn-run btn-v3">Run V3 (10k Cap)</button>
+                        <button onclick="startTask('/run_v3/1', 'v3_1')" class="btn-run btn-v3">Run V3 (20k Cap)</button>
+                    </div>
+                    <div id="prog-v3_0" class="progress-container"><div class="progress-bar"></div></div>
+                    <div id="stat-v3_0" class="status-text"></div>
+                    <div id="prog-v3_1" class="progress-container"><div class="progress-bar"></div></div>
+                    <div id="stat-v3_1" class="status-text"></div>
+                </div>
+            </div>
+
+            <div class="card">
                 <div class="header-flex">
                     <div>
-                        <h1>Real-time Holdings</h1>
-                        <p style="color: var(--text-muted); margin: 4px 0 0 0; font-size: 14px;">Tracking 1-day change and total portfolio P&L</p>
+                        <h1>Live Holdings</h1>
+                        <p style="color: var(--text-muted); margin: 6px 0 0 0; font-size: 14px; font-weight: 500;">Last Sync: {{ now.strftime('%H:%M:%S') }}</p>
                     </div>
-                    <form action="/run_v3" method="POST" style="margin:0;">
-                        <button type="submit" class="btn-primary">
-                            🚀 Run Global Analysis
-                        </button>
-                    </form>
                 </div>
 
                 <table id="portfolioTable" class="display nowrap" style="width:100%">
@@ -289,75 +466,126 @@ HTML_TEMPLATE = """
                         <tr>
                             <th>Ticker</th>
                             <th>Avg Cost</th>
-                            <th>Market Price</th>
-                            <th>Day Change</th>
-                            <th>Profit / Loss</th>
+                            <th>LTP</th>
+                            <th>Day %</th>
+                            <th>Total P&L</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for stock in portfolio %}
                         <tr>
-                            <td style="font-weight: 700; color: var(--primary);">{{ stock.symbol }}</td>
-                            <td>{{ stock.fixed_value }}</td>
-                            <td style="font-weight: 600;">{{ stock.cmp }}</td>
+                            <td><span class="symbol-tag">{{ stock.symbol }}</span></td>
+                            <td style="color: var(--text-muted);">₹{{ stock.fixed_value }}</td>
+                            <td style="font-weight: 700;">₹{{ stock.cmp }}</td>
                             <td class="{{ 'positive' if stock.day_change > 0 else 'negative' }}">
                                 {{ '+' if stock.day_change > 0 }}{{ stock.day_change }}%
                             </td>
-                            <td class="{{ 'positive' if stock.pl_percent > 0 else 'negative' }}" data-order="{{ stock.pl_percent }}">
+                            <td class="{{ 'positive' if stock.pl_percent > 0 else 'negative' }}" data-order="{{ stock.pl_percent }}" style="font-weight: 800;">
                                 {{ '+' if stock.pl_percent > 0 }}{{ stock.pl_percent }}%
                             </td>
                         </tr>
                         {% endfor %}
                     </tbody>
                 </table>
-                
-                <div class="footer-info">
-                    <span>Throttled Engine: 500ms delay per request for stability.</span>
-                    <span>Last Refreshed: <strong>{{ now.strftime('%d %b, %H:%M') }}</strong></span>
-                </div>
             </div>
-            
-            <iframe name="view_frame" id="view_frame" style="display:none;"></iframe>
         </div>
+        
+        <iframe name="view_frame" id="view_frame" style="display:none;"></iframe>
     </div>
 
     <script src="https://code.jquery.com/jquery-3.5.1.js"></script>
     <script src="https://cdn.datatables.net/1.11.5/js/jquery.dataTables.js"></script>
     <script>
+        function startTask(url, taskId) {
+            $('.btn-run').prop('disabled', true);
+            $(`#prog-${taskId}`).show().find('.progress-bar').css('width', '0%');
+            $(`#stat-${taskId}`).show().html('<span style="color:var(--primary)">⚡ INITIALIZING...</span>');
+            
+            $.post(url, function(data) {
+                console.log("Task started:", taskId);
+            });
+        }
+
+        function updateAllProgress() {
+            $.get('/progress', function(data) {
+                let globalAnyRunning = false;
+                
+                for (let taskId in data) {
+                    let task = data[taskId];
+                    let progId = `#prog-${taskId}`;
+                    let statId = `#stat-${taskId}`;
+                    
+                    // Check if task is actually fresh (from last 5 mins)
+                    let taskTime = new Date();
+                    let [h, m, s] = task.time.split(':');
+                    taskTime.setHours(h, m, s);
+                    let diffMs = (new Date()) - taskTime;
+                    
+                    if (task.status === 'downloading' || task.status === 'analyzing' || task.status === 'running') {
+                        globalAnyRunning = true;
+                        let percent = Math.round((task.current / task.total) * 100);
+                        $(progId).show().find('.progress-bar').css('width', percent + '%');
+                        $(statId).show().html(`<span style="color:#10b981">${task.status.toUpperCase()}: ${task.current}/${task.total}</span>`);
+                    } else if (task.status === 'completed') {
+                        // Only show "Complete" if it happened in the last 15 seconds
+                        if (diffMs < 15000) {
+                            $(progId).hide();
+                            $(statId).show().html('<span style="color:#10b981">✓ ANALYSIS COMPLETE</span>');
+                        } else {
+                            $(statId).hide();
+                        }
+                    } else if (task.status === 'error') {
+                        $(progId).hide();
+                        $(statId).show().html(`<span style="color:var(--danger)">⚠ ERROR: ${task.error}</span>`);
+                    }
+                }
+                
+                // Re-enable buttons if nothing is running globally
+                if (!globalAnyRunning) {
+                    $('.btn-run').prop('disabled', false);
+                }
+            });
+        }
+
         $(document).ready( function () {
+            setInterval(updateAllProgress, 2000); // Poll every 2 seconds
+            
             $('#portfolioTable').DataTable({
                 "pageLength": 50,
                 "order": [[4, "desc"]],
-                "dom": '<"header-flex"f>rt<"footer-info"lp><"clear">',
+                "dom": '<"header-flex"f>rt<"footer-info"p>',
                 "language": {
                     "search": "",
-                    "searchPlaceholder": "Search tickers..."
+                    "searchPlaceholder": "Filter symbols..."
                 }
             });
+
+            setInterval(() => {
+                const now = new Date();
+                document.getElementById('clock').innerText = now.toTimeString().split(' ')[0];
+            }, 1000);
         });
 
         function showPortfolio() {
-            document.getElementById('portfolio-view').style.display = 'block';
-            document.getElementById('view_frame').style.display = 'none';
+            $('#portfolio-view').show();
+            $('#view_frame').hide();
             $('.nav-btn').removeClass('active');
             $('.nav-btn:contains("Portfolio")').addClass('active');
         }
 
         function showReport() {
-            document.getElementById('portfolio-view').style.display = 'none';
-            document.getElementById('view_frame').style.display = 'block';
+            $('#portfolio-view').hide();
+            $('#view_frame').show();
             $('.nav-btn').removeClass('active');
         }
 
-        document.querySelectorAll('.nav-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                if(btn.innerText.includes("Live Portfolio")) {
-                    showPortfolio();
-                } else {
-                    showReport();
-                    $(btn).addClass('active');
-                }
-            });
+        $('.nav-btn').click(function() {
+            if($(this).text().includes("Portfolio")) {
+                showPortfolio();
+            } else {
+                showReport();
+                $(this).addClass('active');
+            }
         });
     </script>
 </body>
@@ -365,4 +593,5 @@ HTML_TEMPLATE = """
 """
 
 if __name__ == "__main__":
-    app.run(port=5001, debug=True)
+    port = int(os.environ.get("PORT", 5001))
+    app.run(host='0.0.0.0', port=port, debug=True)

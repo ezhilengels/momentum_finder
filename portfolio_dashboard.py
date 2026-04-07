@@ -79,7 +79,19 @@ def index():
             .section h2 { color: #5f6368; }
             table { width: 100%; border-collapse: collapse; margin-top: 15px; }
             th, td { text-align: left; padding: 12px; border-bottom: 1px solid #ddd; }
-            th { background-color: #f8f9fa; cursor: pointer; }
+            th { background-color: #f8f9fa; cursor: pointer; position: relative; }
+            
+            /* Show only one arrow for sorting */
+            table.dataTable thead th.sorting:before, 
+            table.dataTable thead th.sorting:after,
+            table.dataTable thead th.sorting_asc:before,
+            table.dataTable thead th.sorting_asc:after,
+            table.dataTable thead th.sorting_desc:before,
+            table.dataTable thead th.sorting_desc:after { display: none !important; }
+            
+            table.dataTable thead th.sorting_asc::after { content: " ↑"; }
+            table.dataTable thead th.sorting_desc::after { content: " ↓"; }
+            
             .positive { color: #28a745 !important; font-weight: bold; }
             .negative { color: #dc3545 !important; font-weight: bold; }
             .add-form { background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 30px; display: flex; gap: 10px; align-items: flex-end; justify-content: center; }

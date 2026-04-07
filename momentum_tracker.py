@@ -18,15 +18,15 @@ def process_file(file_path):
     df['Symbol'] = df['Symbol'].str.replace('"', '').str.strip()
     symbols = [f"{s}.NS" for s in df['Symbol'].tolist() if pd.notna(s)]
     
-    # Define timeframes (in days)
+    # Momentum timeframes (for scoring)
     timeframes = {
         '1w': 7, '2w': 14, '3w': 21, '4w': 28,
         '1m': 30, '2m': 60, '3m': 90, '6m': 180, '9m': 270,
         '1y': 365
     }
     
-    # Fetch 1 year of data for ALL symbols in one batch for maximum speed
-    print(f"Fetching 1 year of historical data for {len(symbols)} symbols...")
+    # Fetch data
+    print(f"Fetching historical data for {len(symbols)} symbols...")
     all_data = yf.download(symbols, period="14mo", interval="1d", progress=True)['Close']
     
     if all_data.empty:
@@ -47,29 +47,36 @@ def process_file(file_path):
                 
             row = {'Symbol': symbol.replace('.NS', ''), 'Current Price': round(float(curr_price), 2)}
             
+            # 1. Calculate 1-Day Change (Not in Momentum Score)
+            try:
+                # Compare latest close with previous close
+                prev_price = all_data[symbol].iloc[-2]
+                if pd.notna(prev_price) and prev_price != 0:
+                    row['1d'] = round(((curr_price / prev_price) - 1) * 100, 2)
+                else:
+                    row['1d'] = "N/A"
+            except:
+                row['1d'] = "N/A"
+
+            # 2. Calculate Momentum Score (1w to 1y)
             green_count = 0
             one_year_return = 0
-            
-            # Calculate for each timeframe
             for label, days in timeframes.items():
                 try:
                     target_date = all_data.index[-1] - datetime.timedelta(days=days)
                     price_then = all_data[symbol].asof(target_date)
-                    
                     if pd.notna(price_then) and price_then != 0:
                         ret = ((curr_price / price_then) - 1) * 100
                         val = round(float(ret), 2)
                         row[label] = val
-                        if val > 0:
-                            green_count += 1
-                        if label == '1y':
-                            one_year_return = val
+                        if val > 0: green_count += 1
+                        if label == '1y': one_year_return = val
                     else:
                         row[label] = "N/A"
-                except Exception:
+                except:
                     row[label] = "N/A"
             
-            # Category Logic
+            # 3. Category Logic (Back to 10-point scale)
             category = "Other"
             if one_year_return > 15:
                 if green_count == 10:
@@ -81,7 +88,6 @@ def process_file(file_path):
             
             row['Score'] = f"{green_count}/10"
             row['Category'] = category
-                
             results.append(row)
         except Exception:
             continue
@@ -93,8 +99,8 @@ def generate_html(df, output_file="momentum_report.html"):
         print("No data to generate report.")
         return
 
-    # Column order: Symbol, Category, Score, Current Price, 1w, 2w...
-    cols = ['Symbol', 'Category', 'Score', 'Current Price', '1w', '2w', '3w', '4w', '1m', '2m', '3m', '6m', '9m', '1y']
+    # Column order: 1d is present but Score is out of 10
+    cols = ['Symbol', 'Category', 'Score', 'Current Price', '1d', '1w', '2w', '3w', '4w', '1m', '2m', '3m', '6m', '9m', '1y']
     df = df[cols]
 
     headers = "".join(f"<th>{col}</th>" for col in df.columns)
@@ -104,12 +110,10 @@ def generate_html(df, output_file="momentum_report.html"):
         for i, col_name in enumerate(df.columns):
             val = row[col_name]
             cls = ""
-            # Apply colors to numeric momentum columns
             if i >= 4 and isinstance(val, (int, float)):
                 if val > 0: cls = "positive"
                 elif val < 0: cls = "negative"
             
-            # Special styling for Category
             if col_name == 'Category':
                 if "Pure" in str(val): cls = "cat-pure"
                 elif "Strong" in str(val): cls = "cat-strong"
@@ -132,13 +136,11 @@ def generate_html(df, output_file="momentum_report.html"):
             h2 {{ color: #1a202c; text-align: center; margin-bottom: 10px; }}
             .subtitle {{ text-align: center; color: #718096; margin-bottom: 25px; font-size: 0.9em; }}
             
-            /* Filtering Buttons */
             .filter-group {{ display: flex; justify-content: center; gap: 10px; margin-bottom: 25px; flex-wrap: wrap; }}
             .filter-btn {{ padding: 10px 18px; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; transition: all 0.2s; background: #edf2f7; color: #4a5568; }}
             .filter-btn:hover {{ background: #e2e8f0; }}
             .filter-btn.active {{ background: #3182ce; color: white; }}
             
-            /* Table Styling */
             .positive {{ color: #2f855a !important; font-weight: bold; }}
             .negative {{ color: #c53030 !important; font-weight: bold; }}
             
@@ -148,9 +150,6 @@ def generate_html(df, output_file="momentum_report.html"):
             
             table.dataTable thead th {{ background-color: #2d3748 !important; color: white !important; padding: 12px 10px !important; }}
             table.dataTable tbody td {{ padding: 10px !important; border-bottom: 1px solid #edf2f7; }}
-            
-            /* Sticky Header customization */
-            .fixedHeader-floating {{ top: 0 !important; }}
         </style>
     </head>
     <body>
@@ -167,13 +166,9 @@ def generate_html(df, output_file="momentum_report.html"):
 
             <table id="momentumTable" class="display" style="width:100%">
                 <thead>
-                    <tr>
-                        {headers}
-                    </tr>
+                    <tr>{headers}</tr>
                 </thead>
-                <tbody>
-                    {rows}
-                </tbody>
+                <tbody>{rows}</tbody>
             </table>
         </div>
 
@@ -185,22 +180,18 @@ def generate_html(df, output_file="momentum_report.html"):
             $(document).ready( function () {{
                 table = $('#momentumTable').DataTable({{
                     "pageLength": 100,
-                    "order": [[13, "desc"]], // Default sort by 1 Year return
+                    "order": [[14, "desc"]], // Sort by 1 Year return
                     "scrollX": true,
                     "fixedHeader": true
                 }});
             }} );
 
             function filterTable(category, btn) {{
-                // Update button styles
                 $('.filter-btn').removeClass('active');
                 $(btn).addClass('active');
-
-                // Filter logic
                 if (category === 'all') {{
                     table.column(1).search('').draw();
                 }} else {{
-                    // Search in the Category column (Index 1)
                     table.column(1).search(category).draw();
                 }}
             }}
@@ -216,19 +207,14 @@ def generate_html(df, output_file="momentum_report.html"):
 if __name__ == "__main__":
     print("Choose input file:")
     for i, f in enumerate(INPUT_FILES):
-        if os.path.exists(f):
-            print(f"{i+1}. {f}")
-        else:
-            print(f"{i+1}. {f} (File not found)")
+        if os.path.exists(f): print(f"{i+1}. {f}")
+        else: print(f"{i+1}. {f} (File not found)")
     
     try:
         choice = int(input("Enter choice (1/2): ")) - 1
         selected_file = INPUT_FILES[choice]
-        
-        if not os.path.exists(selected_file):
-            print("Selected file does not exist.")
-        else:
+        if os.path.exists(selected_file):
             results_df = process_file(selected_file)
             generate_html(results_df)
-    except (ValueError, IndexError):
+    except:
         print("Invalid choice.")

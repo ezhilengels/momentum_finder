@@ -85,31 +85,23 @@ def view_report(version):
     filename = f"momentum_report_{version}.html" if version != "v1" else "momentum_report.html"
     return send_from_directory(ROOT_DIR, filename)
 
-@app.route("/progress")
-def get_progress():
-    progress_file = os.path.join(ROOT_DIR, 'progress.json')
-    if os.path.exists(progress_file):
-        with open(progress_file, "r") as f:
-            return json.load(f)
-    return {}
-
 @app.route("/run_v1/<choice>", methods=["POST"])
 def run_v1(choice):
     v1_path = os.path.join(ROOT_DIR, 'momentum_tracker.py')
     subprocess.Popen(["python3", v1_path, choice], cwd=ROOT_DIR)
-    return {"status": "started", "task": f"v1_{choice}"}
+    return redirect(url_for('index'))
 
 @app.route("/run_v2/<choice>", methods=["POST"])
 def run_v2(choice):
     v2_path = os.path.join(ROOT_DIR, 'momentum_tracker_v2.py')
     subprocess.Popen(["python3", v2_path, choice], cwd=ROOT_DIR)
-    return {"status": "started", "task": f"v2_{choice}"}
+    return redirect(url_for('index'))
 
 @app.route("/run_v3/<choice>", methods=["POST"])
 def run_v3(choice):
     v3_path = os.path.join(ROOT_DIR, 'momentum_tracker_v3.py')
     subprocess.Popen(["python3", v3_path, choice], cwd=ROOT_DIR)
-    return {"status": "started", "task": f"v3_{choice}"}
+    return redirect(url_for('index'))
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -241,32 +233,6 @@ HTML_TEMPLATE = """
         .btn-v2 { background: #334155; }
         .btn-v3 { background: #2563eb; }
         .btn-run:hover { transform: translateY(-2px); filter: brightness(1.1); }
-
-        /* Progress Bar Styling */
-        .progress-container {
-            margin-top: 15px;
-            background: #e2e8f0;
-            border-radius: 999px;
-            height: 8px;
-            overflow: hidden;
-            display: none;
-        }
-        .progress-bar {
-            background: #10b981;
-            height: 100%;
-            width: 0%;
-            transition: width 0.3s ease;
-        }
-        .btn-run:disabled { opacity: 0.5; cursor: not-allowed; filter: grayscale(1); }
-        .status-text {
-            font-size: 11px;
-            font-weight: 700;
-            color: var(--text-muted);
-            margin-top: 8px;
-            text-align: center;
-            display: none;
-        }
-        .error-text { color: var(--danger) !important; display: none; margin-top: 4px; font-size: 11px; }
 
         /* Modern Card Styling */
         .card { 
@@ -419,37 +385,25 @@ HTML_TEMPLATE = """
                 <div class="control-card">
                     <h3>⚡ V1 CORE SCOUT</h3>
                     <div class="btn-stack">
-                        <button onclick="startTask('/run_v1/0', 'v1_0')" class="btn-run btn-v1">Run V1 (10k Cap)</button>
-                        <button onclick="startTask('/run_v1/1', 'v1_1')" class="btn-run btn-v1">Run V1 (20k Cap)</button>
+                        <form action="/run_v1/0" method="POST"><button type="submit" class="btn-run btn-v1">Run V1 (10k Cap)</button></form>
+                        <form action="/run_v1/1" method="POST"><button type="submit" class="btn-run btn-v1">Run V1 (20k Cap)</button></form>
                     </div>
-                    <div id="prog-v1_0" class="progress-container"><div class="progress-bar"></div></div>
-                    <div id="stat-v1_0" class="status-text"></div>
-                    <div id="prog-v1_1" class="progress-container"><div class="progress-bar"></div></div>
-                    <div id="stat-v1_1" class="status-text"></div>
                 </div>
                 <!-- V2 Controls -->
                 <div class="control-card">
                     <h3>🔍 V2 ALPHA TRACKER</h3>
                     <div class="btn-stack">
-                        <button onclick="startTask('/run_v2/0', 'v2_0')" class="btn-run btn-v2">Run V2 (10k Cap)</button>
-                        <button onclick="startTask('/run_v2/1', 'v2_1')" class="btn-run btn-v2">Run V2 (20k Cap)</button>
+                        <form action="/run_v2/0" method="POST"><button type="submit" class="btn-run btn-v2">Run V2 (10k Cap)</button></form>
+                        <form action="/run_v2/1" method="POST"><button type="submit" class="btn-run btn-v2">Run V2 (20k Cap)</button></form>
                     </div>
-                    <div id="prog-v2_0" class="progress-container"><div class="progress-bar"></div></div>
-                    <div id="stat-v2_0" class="status-text"></div>
-                    <div id="prog-v2_1" class="progress-container"><div class="progress-bar"></div></div>
-                    <div id="stat-v2_1" class="status-text"></div>
                 </div>
                 <!-- V3 Controls -->
                 <div class="control-card">
                     <h3>🚀 V3 ULTIMATE BOT</h3>
                     <div class="btn-stack">
-                        <button onclick="startTask('/run_v3/0', 'v3_0')" class="btn-run btn-v3">Run V3 (10k Cap)</button>
-                        <button onclick="startTask('/run_v3/1', 'v3_1')" class="btn-run btn-v3">Run V3 (20k Cap)</button>
+                        <form action="/run_v3/0" method="POST"><button type="submit" class="btn-run btn-v3">Run V3 (10k Cap)</button></form>
+                        <form action="/run_v3/1" method="POST"><button type="submit" class="btn-run btn-v3">Run V3 (20k Cap)</button></form>
                     </div>
-                    <div id="prog-v3_0" class="progress-container"><div class="progress-bar"></div></div>
-                    <div id="stat-v3_0" class="status-text"></div>
-                    <div id="prog-v3_1" class="progress-container"><div class="progress-bar"></div></div>
-                    <div id="stat-v3_1" class="status-text"></div>
                 </div>
             </div>
 
@@ -496,60 +450,7 @@ HTML_TEMPLATE = """
     <script src="https://code.jquery.com/jquery-3.5.1.js"></script>
     <script src="https://cdn.datatables.net/1.11.5/js/jquery.dataTables.js"></script>
     <script>
-        function startTask(url, taskId) {
-            $('.btn-run').prop('disabled', true);
-            $(`#prog-${taskId}`).show().find('.progress-bar').css('width', '0%');
-            $(`#stat-${taskId}`).show().html('<span style="color:var(--primary)">⚡ INITIALIZING...</span>');
-            
-            $.post(url, function(data) {
-                console.log("Task started:", taskId);
-            });
-        }
-
-        function updateAllProgress() {
-            $.get('/progress', function(data) {
-                let globalAnyRunning = false;
-                
-                for (let taskId in data) {
-                    let task = data[taskId];
-                    let progId = `#prog-${taskId}`;
-                    let statId = `#stat-${taskId}`;
-                    
-                    // Check if task is actually fresh (from last 5 mins)
-                    let taskTime = new Date();
-                    let [h, m, s] = task.time.split(':');
-                    taskTime.setHours(h, m, s);
-                    let diffMs = (new Date()) - taskTime;
-                    
-                    if (task.status === 'downloading' || task.status === 'analyzing' || task.status === 'running') {
-                        globalAnyRunning = true;
-                        let percent = Math.round((task.current / task.total) * 100);
-                        $(progId).show().find('.progress-bar').css('width', percent + '%');
-                        $(statId).show().html(`<span style="color:#10b981">${task.status.toUpperCase()}: ${task.current}/${task.total}</span>`);
-                    } else if (task.status === 'completed') {
-                        // Only show "Complete" if it happened in the last 15 seconds
-                        if (diffMs < 15000) {
-                            $(progId).hide();
-                            $(statId).show().html('<span style="color:#10b981">✓ ANALYSIS COMPLETE</span>');
-                        } else {
-                            $(statId).hide();
-                        }
-                    } else if (task.status === 'error') {
-                        $(progId).hide();
-                        $(statId).show().html(`<span style="color:var(--danger)">⚠ ERROR: ${task.error}</span>`);
-                    }
-                }
-                
-                // Re-enable buttons if nothing is running globally
-                if (!globalAnyRunning) {
-                    $('.btn-run').prop('disabled', false);
-                }
-            });
-        }
-
         $(document).ready( function () {
-            setInterval(updateAllProgress, 2000); // Poll every 2 seconds
-            
             $('#portfolioTable').DataTable({
                 "pageLength": 50,
                 "order": [[4, "desc"]],
@@ -562,7 +463,8 @@ HTML_TEMPLATE = """
 
             setInterval(() => {
                 const now = new Date();
-                document.getElementById('clock').innerText = now.toTimeString().split(' ')[0];
+                const clockEl = document.getElementById('clock');
+                if (clockEl) clockEl.innerText = now.toTimeString().split(' ')[0];
             }, 1000);
         });
 

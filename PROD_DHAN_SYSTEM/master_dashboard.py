@@ -1,8 +1,12 @@
 import os
 import json
 import subprocess
+import sys
 from datetime import datetime
 from flask import Flask, render_template_string, request, redirect, url_for, send_from_directory
+
+# Ensure the current directory is in the path for imports
+sys.path.append(os.path.dirname(__file__))
 from universal_engine import engine
 
 app = Flask(__name__)

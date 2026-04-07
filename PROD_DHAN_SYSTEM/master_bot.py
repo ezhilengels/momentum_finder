@@ -2,8 +2,12 @@ import os
 import json
 import datetime
 import telebot
+import sys
 from apscheduler.schedulers.background import BackgroundScheduler
 from dotenv import load_dotenv
+
+# Ensure the current directory is in the path for imports
+sys.path.append(os.path.dirname(__file__))
 from universal_engine import engine
 
 # Load environment variables from root

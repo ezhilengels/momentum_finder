@@ -1,0 +1,143 @@
+[
+    {
+        "symbol": "IDBI",
+        "fixed_value": 70.06
+    },
+    {
+        "symbol": "ULTRACEMCO",
+        "fixed_value": 10955.0
+    },
+    {
+        "symbol": "AMBUJACEM",
+        "fixed_value": 430.05
+    },
+    {
+        "symbol": "NATCOPHARM",
+        "fixed_value": 1028.55
+    },
+    {
+        "symbol": "AVANTIFEED",
+        "fixed_value": 1238.8
+    },
+    {
+        "symbol": "PRIVISCL",
+        "fixed_value": 2961.7
+    },
+    {
+        "symbol": "BSE",
+        "fixed_value": 2982.3
+    },
+    {
+        "symbol": "ZYDUSWELL",
+        "fixed_value": 509.35
+    },
+    {
+        "symbol": "GRANULES",
+        "fixed_value": 644.0
+    },
+    {
+        "symbol": "GESHIP",
+        "fixed_value": 1463.0
+    },
+    {
+        "symbol": "NATIONALUM",
+        "fixed_value": 407.85
+    },
+    {
+        "symbol": "NLCINDIA",
+        "fixed_value": 275.0
+    },
+    {
+        "symbol": "MAHABANK",
+        "fixed_value": 66.59
+    },
+    {
+        "symbol": "COALINDIA",
+        "fixed_value": 459.55
+    },
+    {
+        "symbol": "FORCEMOT",
+        "fixed_value": 21183.0
+    },
+    {
+        "symbol": "CANBK",
+        "fixed_value": 130.51
+    },
+    {
+        "symbol": "BANKBARODA",
+        "fixed_value": 259.76
+    },
+    {
+        "symbol": "RECLTD",
+        "fixed_value": 327.55
+    },
+    {
+        "symbol": "PFC",
+        "fixed_value": 405.9
+    },
+    {
+        "symbol": "ADANIPOWER",
+        "fixed_value": 163.26
+    },
+    {
+        "symbol": "LAURUSLABS",
+        "fixed_value": 1058.2
+    },
+    {
+        "symbol": "MASTEK",
+        "fixed_value": 1489.6
+    },
+    {
+        "symbol": "TCS",
+        "fixed_value": 2473.9
+    },
+    {
+        "symbol": "SANSERA",
+        "fixed_value": 2143.6
+    },
+    {
+        "symbol": "BANKINDIA",
+        "fixed_value": 143.05
+    },
+    {
+        "symbol": "ACC",
+        "fixed_value": 1362.1
+    },
+    {
+        "symbol": "PNB",
+        "fixed_value": 106.5
+    },
+    {
+        "symbol": "BPCL",
+        "fixed_value": 278.7
+    },
+    {
+        "symbol": "ANANDRATHI",
+        "fixed_value": 3282.9
+    },
+    {
+        "symbol": "TITAN",
+        "fixed_value": 4246.1
+    },
+    {
+        "symbol": "ONGC",
+        "fixed_value": 281.85
+    },
+    {
+        "symbol": "CPPLUS",
+        "fixed_value": 1818.2
+    },
+    {
+        "symbol": "SHRIPISTON",
+        "fixed_value": 2985.2
+    },
+    {
+        "symbol": "SCHNEIDER",
+        "fixed_value": 2985.2
+    },
+    {
+        "symbol": "AIIL",
+        "fixed_value": 415
+    }
+    
+]

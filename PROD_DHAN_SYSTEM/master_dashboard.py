@@ -20,13 +20,10 @@ if not os.path.exists(PROGRESS_FILE):
     with open(PROGRESS_FILE, "w") as f:
         json.dump({}, f)
 
-STOCKS_FILE = os.path.join(ROOT_DIR, 'portfolio_stocks.json')
-
-def get_tracked_stocks():
-    if not os.path.exists(STOCKS_FILE): return []
-    with open(STOCKS_FILE, "r") as f:
-        try: return json.load(f)
-        except: return []
+PORTFOLIOS = [
+    ("core", "Core Portfolio"),
+    ("momentum2", "Momentum2"),
+]
 
 def read_progress():
     if not os.path.exists(PROGRESS_FILE):
@@ -37,9 +34,9 @@ def read_progress():
         except:
             return {}
 
-def get_portfolio_data():
+def get_portfolio_data(portfolio_key):
     """Fetch live data using Universal Engine (yfinance)"""
-    stocks = get_tracked_stocks()
+    stocks = engine.read_portfolio(portfolio_key)
     if not stocks: return []
     
     symbols = [s['symbol'] for s in stocks]
@@ -68,22 +65,42 @@ def get_portfolio_data():
         })
     return results
 
+def summarize_portfolio(portfolio):
+    total_pl = [s['pl_percent'] for s in portfolio if isinstance(s['pl_percent'], (int, float))]
+    avg_pl = round(sum(total_pl) / len(total_pl), 2) if total_pl else 0
+
+    total_day = [s['day_change'] for s in portfolio if isinstance(s['day_change'], (int, float))]
+    avg_day = round(sum(total_day) / len(total_day), 2) if total_day else 0
+
+    return {
+        "count": len(portfolio),
+        "avg_pl": avg_pl,
+        "avg_day": avg_day,
+    }
+
 @app.route("/")
 def index():
     try:
-        portfolio = get_portfolio_data()
-        
-        # Calculate summary stats
-        total_pl = [s['pl_percent'] for s in portfolio if isinstance(s['pl_percent'], (int, float))]
-        avg_pl = round(sum(total_pl) / len(total_pl), 2) if total_pl else 0
-        
-        total_day = [s['day_change'] for s in portfolio if isinstance(s['day_change'], (int, float))]
-        avg_day = round(sum(total_day) / len(total_day), 2) if total_day else 0
+        portfolios = []
+        combined = []
+        for key, label in PORTFOLIOS:
+            portfolio = get_portfolio_data(key)
+            portfolios.append({
+                "key": key,
+                "label": label,
+                "table_id": f"{key}Table",
+                "rows": portfolio,
+                "summary": summarize_portfolio(portfolio),
+            })
+            combined.extend(portfolio)
+
+        combined_summary = summarize_portfolio(combined)
 
         return render_template_string(HTML_TEMPLATE, 
-                                     portfolio=portfolio, 
-                                     avg_pl=avg_pl, 
-                                     avg_day=avg_day,
+                                     portfolios=portfolios, 
+                                     portfolio_table_ids=[p["table_id"] for p in portfolios],
+                                     avg_pl=combined_summary["avg_pl"], 
+                                     avg_day=combined_summary["avg_day"],
                                      current_tab='portfolio', 
                                      now=datetime.now(),
                                      selected_run=request.args.get('run', ''))
@@ -437,6 +454,57 @@ HTML_TEMPLATE = """
             font-size: 13px;
             box-shadow: inset 0 1px 0 rgba(255,255,255,0.8);
         }
+        .holdings-tabs {
+            display: inline-flex;
+            gap: 10px;
+            padding: 6px;
+            border-radius: 16px;
+            background: #edf4ff;
+            border: 1px solid rgba(148, 163, 184, 0.18);
+        }
+        .holdings-tab {
+            border: none;
+            background: transparent;
+            color: #475569;
+            padding: 10px 16px;
+            border-radius: 12px;
+            font-size: 13px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .holdings-tab.active {
+            background: linear-gradient(135deg, #2563eb, #1d4ed8);
+            color: white;
+            box-shadow: 0 12px 24px -18px rgba(37, 99, 235, 0.9);
+        }
+        .holdings-panel { display: none; }
+        .holdings-panel.active { display: block; }
+        .mini-summary {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-top: 16px;
+            margin-bottom: 8px;
+        }
+        .mini-chip {
+            padding: 8px 12px;
+            border-radius: 999px;
+            background: #f8fbff;
+            border: 1px solid rgba(148, 163, 184, 0.18);
+            color: #64748b;
+            font-size: 12px;
+            font-weight: 700;
+        }
+        .empty-state {
+            padding: 20px;
+            border-radius: 18px;
+            background: #f8fbff;
+            border: 1px dashed rgba(148, 163, 184, 0.35);
+            color: #64748b;
+            font-weight: 600;
+            margin-top: 18px;
+        }
     </style>
 </head>
 <body>
@@ -545,34 +613,53 @@ HTML_TEMPLATE = """
                         <h1>Live Holdings</h1>
                         <p style="color: var(--text-muted); margin: 6px 0 0 0; font-size: 14px; font-weight: 500;">Last Sync: {{ now.strftime('%H:%M:%S') }}</p>
                     </div>
+                    <div class="holdings-tabs">
+                        {% for portfolio in portfolios %}
+                        <button type="button" class="holdings-tab {{ 'active' if loop.first else '' }}" data-target="{{ portfolio.key }}">{{ portfolio.label }}</button>
+                        {% endfor %}
+                    </div>
                 </div>
 
-                <table id="portfolioTable" class="display nowrap" style="width:100%">
-                    <thead>
-                        <tr>
-                            <th>Ticker</th>
-                            <th>Avg Cost</th>
-                            <th>LTP</th>
-                            <th>Day %</th>
-                            <th>Total P&L</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for stock in portfolio %}
-                        <tr>
-                            <td><span class="symbol-tag">{{ stock.symbol }}</span></td>
-                            <td style="color: var(--text-muted);">₹{{ stock.fixed_value }}</td>
-                            <td style="font-weight: 700;">₹{{ stock.cmp }}</td>
-                            <td class="{{ 'positive' if stock.day_change > 0 else 'negative' }}">
-                                {{ '+' if stock.day_change > 0 }}{{ stock.day_change }}%
-                            </td>
-                            <td class="{{ 'positive' if stock.pl_percent > 0 else 'negative' }}" data-order="{{ stock.pl_percent }}" style="font-weight: 800;">
-                                {{ '+' if stock.pl_percent > 0 }}{{ stock.pl_percent }}%
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+                {% for portfolio in portfolios %}
+                <div class="holdings-panel {{ 'active' if loop.first else '' }}" id="panel-{{ portfolio.key }}">
+                    <div class="mini-summary">
+                        <div class="mini-chip">{{ portfolio.summary.count }} stocks</div>
+                        <div class="mini-chip">Avg Day {{ '+' if portfolio.summary.avg_day > 0 }}{{ portfolio.summary.avg_day }}%</div>
+                        <div class="mini-chip">Avg P&amp;L {{ '+' if portfolio.summary.avg_pl > 0 }}{{ portfolio.summary.avg_pl }}%</div>
+                    </div>
+
+                    {% if portfolio.rows %}
+                    <table id="{{ portfolio.table_id }}" class="display nowrap holdings-table" style="width:100%">
+                        <thead>
+                            <tr>
+                                <th>Ticker</th>
+                                <th>Avg Cost</th>
+                                <th>LTP</th>
+                                <th>Day %</th>
+                                <th>Total P&L</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for stock in portfolio.rows %}
+                            <tr>
+                                <td><span class="symbol-tag">{{ stock.symbol }}</span></td>
+                                <td style="color: var(--text-muted);">₹{{ stock.fixed_value }}</td>
+                                <td style="font-weight: 700;">₹{{ stock.cmp }}</td>
+                                <td class="{{ 'positive' if stock.day_change > 0 else 'negative' }}">
+                                    {{ '+' if stock.day_change > 0 }}{{ stock.day_change }}%
+                                </td>
+                                <td class="{{ 'positive' if stock.pl_percent > 0 else 'negative' }}" data-order="{{ stock.pl_percent }}" style="font-weight: 800;">
+                                    {{ '+' if stock.pl_percent > 0 }}{{ stock.pl_percent }}%
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    {% else %}
+                    <div class="empty-state">{{ portfolio.label }} is empty. Add entries to the matching JSON file to populate this tab.</div>
+                    {% endif %}
+                </div>
+                {% endfor %}
             </div>
         </div>
         
@@ -584,6 +671,7 @@ HTML_TEMPLATE = """
     <script>
         const selectedRun = {{ selected_run|tojson }};
         const taskChoices = ['0', '1', '2'];
+        const portfolioTableIds = {{ portfolio_table_ids|tojson }};
         const versionTasks = {
             v1: taskChoices.map(choice => `v1_${choice}`),
             v2: taskChoices.map(choice => `v2_${choice}`),
@@ -708,14 +796,26 @@ HTML_TEMPLATE = """
         }
 
         $(document).ready( function () {
-            $('#portfolioTable').DataTable({
-                "pageLength": 50,
-                "order": [[4, "desc"]],
-                "dom": '<"header-flex"f>rt<"footer-info"p>',
-                "language": {
-                    "search": "",
-                    "searchPlaceholder": "Filter symbols..."
-                }
+            portfolioTableIds.forEach((tableId) => {
+                const selector = `#${tableId}`;
+                if (!$(selector).length) return;
+                $(selector).DataTable({
+                    "pageLength": 50,
+                    "order": [[4, "desc"]],
+                    "dom": '<"header-flex"f>rt<"footer-info"p>',
+                    "language": {
+                        "search": "",
+                        "searchPlaceholder": "Filter symbols..."
+                    }
+                });
+            });
+
+            $('.holdings-tab').on('click', function() {
+                const target = $(this).data('target');
+                $('.holdings-tab').removeClass('active');
+                $(this).addClass('active');
+                $('.holdings-panel').removeClass('active');
+                $(`#panel-${target}`).addClass('active');
             });
 
             refreshProgress();

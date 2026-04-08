@@ -10,7 +10,10 @@ class UniversalEngine:
         self.delay = delay
         # Absolute paths to ensure it works on both local and Railway
         self.base_dir = os.path.join(os.path.dirname(__file__), '..')
-        self.stocks_file = os.path.join(self.base_dir, 'portfolio_stocks.json')
+        self.portfolio_files = {
+            "core": os.path.join(self.base_dir, 'portfolio_stocks.json'),
+            "momentum2": os.path.join(self.base_dir, 'portfolio_stocks2.json'),
+        }
         self.cache_file = os.path.join(self.base_dir, 'portfolio_cache.json')
         
         print(f"🛠️ Engine Init: Cache Path -> {self.cache_file}")
@@ -37,27 +40,36 @@ class UniversalEngine:
         print("⚠️ Cache file not found or empty yet...")
         return {}
 
+    def read_portfolio(self, portfolio_key):
+        portfolio_file = self.portfolio_files.get(portfolio_key)
+        if not portfolio_file or not os.path.exists(portfolio_file):
+            return []
+        with open(portfolio_file, 'r') as f:
+            try:
+                return json.load(f)
+            except:
+                print(f"❌ Error: {os.path.basename(portfolio_file)} is empty or invalid.")
+                return []
+
+    def get_all_tracked_symbols(self):
+        symbols = []
+        seen = set()
+        for portfolio_key in self.portfolio_files:
+            for stock in self.read_portfolio(portfolio_key):
+                symbol = stock.get('symbol')
+                if symbol and symbol not in seen:
+                    seen.add(symbol)
+                    symbols.append(symbol)
+        return symbols
+
     def update_cache(self):
         """The actual fetching logic (runs in background)"""
         print(f"🔄 Background Refresh Started at {datetime.datetime.now().strftime('%H:%M:%S')}")
-        
-        # Read stocks directly to avoid import issues
-        if not os.path.exists(self.stocks_file):
-            print(f"❌ Error: {self.stocks_file} not found.")
-            return
-            
-        with open(self.stocks_file, 'r') as f:
-            try:
-                stocks = json.load(f)
-            except:
-                print("❌ Error: portfolio_stocks.json is empty or invalid.")
-                return
 
-        if not stocks:
-            print("📉 No stocks found in portfolio_stocks.json")
+        symbols = self.get_all_tracked_symbols()
+        if not symbols:
+            print("📉 No stocks found in portfolio files")
             return
-        
-        symbols = [s['symbol'] for s in stocks]
         quotes = {}
         
         for symbol in symbols:

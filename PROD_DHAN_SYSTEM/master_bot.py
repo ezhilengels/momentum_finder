@@ -1,5 +1,4 @@
 import os
-import json
 import datetime
 import telebot
 import sys
@@ -15,29 +14,29 @@ load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 # Configuration
 ROOT_DIR = os.path.join(os.path.dirname(__file__), '..')
-STOCKS_FILE = os.path.join(ROOT_DIR, 'portfolio_stocks.json')
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+PORTFOLIOS = [
+    ("Core Portfolio", "core"),
+    ("Momentum2", "momentum2"),
+]
 
 # Initialize Telegram Bot
 bot = telebot.TeleBot(TELEGRAM_TOKEN) if TELEGRAM_TOKEN else None
 
-def get_tracked_stocks():
-    if not os.path.exists(STOCKS_FILE): return []
-    with open(STOCKS_FILE, "r") as f:
-        try: return json.load(f)
-        except: return []
+def get_tracked_stocks(portfolio_key):
+    return engine.read_portfolio(portfolio_key)
 
-def get_portfolio_report():
-    stocks = get_tracked_stocks()
+def get_portfolio_report(title, portfolio_key):
+    stocks = get_tracked_stocks(portfolio_key)
     if not stocks:
-        return "📉 *No stocks are currently being tracked.*"
+        return f"📉 *{title}*\nNo stocks are currently being tracked."
 
     symbols = [s['symbol'] for s in stocks]
     quotes = engine.get_market_quote(symbols)
     
     if not quotes:
-        return "❌ *Error: Could not fetch data from Yahoo Finance.*"
+        return f"❌ *{title}*\nCould not fetch data from Yahoo Finance."
 
     # Separate stocks for better organization
     profit_data = []
@@ -48,9 +47,10 @@ def get_portfolio_report():
     for stock in stocks:
         symbol = stock['symbol']
         fixed_val = float(stock['fixed_value'])
-        cmp = quotes.get(symbol)
+        quote = quotes.get(symbol, {})
+        cmp = quote.get("ltp")
         
-        if cmp:
+        if isinstance(cmp, (int, float)):
             pl_percent = ((cmp - fixed_val) / fixed_val) * 100
             total_pl += pl_percent
             count += 1
@@ -73,7 +73,7 @@ def get_portfolio_report():
     losses = [item['text'] for item in loss_data]
 
     # Build the Message
-    report = "🚀 *PORTFOLIO PERFORMANCE*\n"
+    report = f"🚀 *{title.upper()}*\n"
     report += "━━━━━━━━━━━━━━━━━━━━━━\n\n"
     
     # Header for the table
@@ -106,19 +106,23 @@ def get_portfolio_report():
     report += f"🕒 *Updated:* `{datetime.datetime.now().strftime('%H:%M:%S')}`"
     return report
 
+def build_all_reports():
+    return [get_portfolio_report(title, key) for title, key in PORTFOLIOS]
+
 def scheduled_update():
     if bot and TELEGRAM_CHAT_ID:
-        report = get_portfolio_report()
-        # Using Markdown for simple formatting, blocks will handle the rest
-        bot.send_message(TELEGRAM_CHAT_ID, report, parse_mode="Markdown")
+        for report in build_all_reports():
+            bot.send_message(TELEGRAM_CHAT_ID, report, parse_mode="Markdown")
 
 # --- Telegram Handlers ---
 
 @bot.message_handler(commands=['status'])
 def send_status(message):
     msg = bot.send_message(message.chat.id, "🔄 *Analyzing your portfolio...*", parse_mode="Markdown")
-    report = get_portfolio_report()
-    bot.edit_message_text(report, chat_id=message.chat.id, message_id=msg.message_id, parse_mode="Markdown")
+    reports = build_all_reports()
+    bot.edit_message_text(reports[0], chat_id=message.chat.id, message_id=msg.message_id, parse_mode="Markdown")
+    for report in reports[1:]:
+        bot.send_message(message.chat.id, report, parse_mode="Markdown")
 
 @bot.message_handler(commands=['start', 'help'])
 def welcome(message):

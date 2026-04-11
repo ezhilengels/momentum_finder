@@ -6,8 +6,8 @@ gunicorn>=21.0
 yfinance>=0.2.36
 pandas>=2.0
 pandas-datareader>=0.10    # Stooq — primary stock history (no API key)
-nsepython>=2023.7          # NSE official index history
-jugaad-data>=0.27          # NSE official stock fallback
+nsepython>=2.0             # NSE official index history (latest is 2.97)
+jugaad-data                # NSE official stock fallback
 pyarrow>=14.0              # parquet read/write for price cache
 
 # Scheduling

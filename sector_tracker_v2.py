@@ -499,7 +499,12 @@ def generate_html(stocks_df, sector_df, index_returns, mode="morning"):
             if col == "Category":
                 flat_rows_html += f'<td>{_cat_chip_html(val_disp)}</td>'
             elif col == "Score Label":
-                flat_rows_html += f'<td>{_score_chip_html(val_disp)}</td>'
+                # data-order lets DataTables sort numerically on the raw score
+                try:
+                    sort_n = int(str(val_disp).split("/")[0])
+                except Exception:
+                    sort_n = 0
+                flat_rows_html += f'<td data-order="{sort_n}">{_score_chip_html(val_disp)}</td>'
             else:
                 style = _ret_color_style(val) if i >= 5 else ""
                 flat_rows_html += f'<td style="{style}">{val_disp}</td>'
@@ -837,7 +842,8 @@ function renderDrill() {{
   document.getElementById('drillBody').innerHTML = rows.map(r => {{
     let cells = `<td><b>${{r.sym}}</b></td>`;
     cells += `<td>${{catChip(r.cat)}}</td>`;
-    cells += `<td>${{scoreChip(r.score)}}</td>`;
+    const scoreN = parseInt(r.score) || 0;
+    cells += `<td data-order="${{scoreN}}">${{scoreChip(r.score)}}</td>`;
     cells += `<td>₹${{r.price}}</td>`;
     TF_LABELS.forEach(tf => {{ cells += `<td>${{fmt(r[tf])}}</td>`; }});
     ['1m','3m','1y'].forEach(tf => {{ cells += `<td>${{fmt(r[tf + 'v'])}}</td>`; }});
@@ -854,7 +860,6 @@ function renderDrill() {{
     fixedHeader: true,
     destroy: true,
     columnDefs: [
-      {{ targets: [2],        type: 'string'  }},   // Score (e.g. "12/15") — sort as string desc
       {{ targets: '_all',     className: 'dt-center' }},
       {{ targets: [0,1],      className: 'dt-left' }}
     ]

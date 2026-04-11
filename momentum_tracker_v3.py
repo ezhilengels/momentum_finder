@@ -4,34 +4,169 @@ from tqdm import tqdm
 import datetime
 import os
 import json
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import buffett
 import config
 
-# Configuration
-INPUT_FILES = [
-    "market cap greater than 10000.csv",
-    "market cap greater than 20000csv.csv",
-    "ind_nifty500list.csv"
-]
+# ── Stooq fallback (works on Railway / cloud where Yahoo Finance is blocked) ──
+try:
+    from pandas_datareader import data as pdr
+    _STOOQ_OK = True
+except ImportError:
+    _STOOQ_OK = False
 
-def update_progress(task_id, current, total, status="running", error=None):
-    progress_file = "progress.json"
-    data = {}
-    if os.path.exists(progress_file):
+
+def _robust_download(symbols: list, years: int = 6, task_id: str = None) -> pd.DataFrame:
+    """
+    Batched yfinance (30 tickers, 3s pause) → Stooq thread-pool fallback.
+    Same batching strategy as nse_history_provider.py sector tracker.
+    """
+    end   = datetime.date.today()
+    start = end - datetime.timedelta(days=365 * years)
+
+    _BATCH   = 30   # tickers per yfinance call
+    _PAUSE   = 3    # seconds between batches (throttle)
+    _TIMEOUT = 45   # per-batch hard timeout
+
+    batches    = [symbols[i:i+_BATCH] for i in range(0, len(symbols), _BATCH)]
+    all_frames = []
+    yf_ok = yf_fail = 0
+
+    msg = f"⏬ yfinance: {len(symbols)} symbols → {len(batches)} batches (30/batch, 3s pause)"
+    print(f"  {msg}")
+    if task_id: _append_log(task_id, msg)
+
+    for b_idx, batch in enumerate(batches, 1):
+        print(f"  batch {b_idx:>2}/{len(batches)} ({len(batch)}) …", end=" ", flush=True)
         try:
-            with open(progress_file, "r") as f:
-                data = json.load(f)
-        except: pass
-    
+            with ThreadPoolExecutor(max_workers=1) as _p:
+                _f = _p.submit(yf.download, batch,
+                               period=f"{years}y", interval="1d",
+                               progress=False, auto_adjust=True)
+                raw = _f.result(timeout=_TIMEOUT)
+            close = raw["Close"] if "Close" in raw.columns else raw
+            if isinstance(close, pd.Series):
+                close = close.to_frame(name=batch[0])
+            close = close.dropna(how="all")
+            got = [c for c in close.columns if close[c].dropna().shape[0] > 0]
+            if got:
+                all_frames.append(close[got])
+                yf_ok += len(got)
+                print(f"✓ {len(got)}")
+            else:
+                yf_fail += len(batch)
+                print("✗ empty")
+        except Exception as e:
+            yf_fail += len(batch)
+            print(f"✗ {type(e).__name__}")
+        if task_id and (b_idx % 5 == 0 or b_idx == len(batches)):
+            _append_log(task_id, f"⏬ Batch {b_idx}/{len(batches)} done — ✓{yf_ok} fetched so far")
+        if b_idx < len(batches):
+            time.sleep(_PAUSE)
+
+    summary = f"yfinance done: ✓{yf_ok} ✗{yf_fail} / {len(symbols)}"
+    print(f"  [yfinance] total ✓{yf_ok} ✗{yf_fail}")
+    if task_id: _append_log(task_id, summary)
+
+    if all_frames:
+        merged = pd.concat(all_frames, axis=1)
+        merged = merged.loc[:, ~merged.columns.duplicated()]
+        if merged.shape[1] >= max(1, len(symbols) * 0.5):
+            return merged.sort_index()
+        msg = f"⚠️ yfinance low coverage ({merged.shape[1]}/{len(symbols)}) → Stooq fallback"
+        print(f"  {msg}")
+        if task_id: _append_log(task_id, msg)
+
+    if not _STOOQ_OK:
+        print("  [Stooq] pandas-datareader not installed — no fallback")
+        if task_id: _append_log(task_id, "❌ No fallback (install pandas-datareader)")
+        return pd.DataFrame()
+
+    msg = f"🔄 Stooq fallback: {len(symbols)} symbols, 20 workers …"
+    print(f"  {msg}")
+    if task_id: _append_log(task_id, msg)
+    results: dict = {}
+    ok = fail = 0
+
+    def _fetch_one(sym):
+        try:
+            df = pdr.DataReader(sym, "stooq", start=start, end=end)
+            if df is not None and not df.empty and "Close" in df.columns:
+                s = df["Close"].rename(sym).sort_index()
+                s.index = pd.to_datetime(s.index).normalize()
+                return sym, s.dropna()
+        except Exception:
+            pass
+        return sym, None
+
+    with ThreadPoolExecutor(max_workers=20) as pool:
+        futures = {pool.submit(_fetch_one, s): s for s in symbols}
+        done = 0
+        for fut in as_completed(futures):
+            sym, series = fut.result()
+            done += 1
+            if series is not None and not series.empty:
+                results[sym] = series
+                ok += 1
+            else:
+                fail += 1
+            if done % 50 == 0 or done == len(symbols):
+                pct = int(done / len(symbols) * 100)
+                bar = ("█" * (pct // 5)).ljust(20)
+                print(f"\r  [Stooq] [{bar}] {pct:3d}%  ✓{ok} ✗{fail}", end="", flush=True)
+            time.sleep(0.05)
+
+    print(f"\n  [Stooq] ✓{ok}/{len(symbols)}")
+    if not results:
+        return pd.DataFrame()
+    df = pd.concat(results.values(), axis=1)
+    return df.loc[:, ~df.columns.duplicated()].sort_index()
+
+def _read_progress_file():
+    pf = "progress.json"
+    if os.path.exists(pf):
+        try:
+            with open(pf, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def _write_progress_file(data):
+    pf = "progress.json"
+    with open(pf, "w") as f:
+        json.dump(data, f)
+
+def update_progress(task_id, current, total, status="running", error=None, log=None):
+    data = _read_progress_file()
+    existing = data.get(task_id, {})
+    logs = existing.get("logs", [])
+    if log:
+        ts = datetime.datetime.now().strftime('%H:%M:%S')
+        logs.append(f"[{ts}] {log}")
+        logs = logs[-10:]
     data[task_id] = {
         "current": current,
         "total": total,
         "status": status,
         "error": error,
-        "time": datetime.datetime.now().strftime('%H:%M:%S')
+        "time": datetime.datetime.now().strftime('%H:%M:%S'),
+        "logs": logs,
     }
-    with open(progress_file, "w") as f:
-        json.dump(data, f)
+    _write_progress_file(data)
+
+def _append_log(task_id, msg):
+    """Append a log line without changing current/total/status."""
+    data = _read_progress_file()
+    existing = data.get(task_id, {})
+    logs = existing.get("logs", [])
+    ts = datetime.datetime.now().strftime('%H:%M:%S')
+    logs.append(f"[{ts}] {msg}")
+    logs = logs[-10:]
+    existing["logs"] = logs
+    data[task_id] = existing
+    _write_progress_file(data)
 
 def get_fundamental_data(ticker_obj, current_price):
     """Fetch data needed for buffett.py valuation."""
@@ -92,16 +227,14 @@ def process_file(file_path, task_id="v3"):
     }
     
     total = len(symbols)
-    update_progress(task_id, 0, total, "downloading")
+    update_progress(task_id, 0, total, "downloading",
+                    log=f"📂 Loaded {total} symbols from CSV — starting download")
     print(f"Fetching 6 years of historical data for {total} symbols...")
-    try:
-        all_data = yf.download(symbols, period="6y", interval="1d", progress=True)['Close']
-    except Exception as e:
-        update_progress(task_id, 0, total, "error", str(e))
-        return pd.DataFrame()
-    
+    all_data = _robust_download(symbols, years=6, task_id=task_id)
+
     if all_data.empty:
-        update_progress(task_id, 0, total, "error", "No price data")
+        update_progress(task_id, 0, total, "error", "No price data (yfinance + Stooq both failed)",
+                        log="❌ No data returned — check network / yfinance")
         print("Error: Could not fetch price data.")
         return pd.DataFrame()
 
@@ -111,9 +244,14 @@ def process_file(file_path, task_id="v3"):
     # We use yf.Tickers for fundamental data
     tickers_dict = yf.Tickers(" ".join(symbols)).tickers
     
+    update_progress(task_id, 0, total, "analyzing",
+                    log=f"✅ Data ready ({all_data.shape[1]} symbols) — running V3 deep analysis")
     for i, symbol in enumerate(tqdm(symbols, desc="V3 Deep Analysis")):
         try:
-            if i % 2 == 0: # Update more often for V3 since it's slow
+            if i % 50 == 0 and i > 0:
+                update_progress(task_id, i, total, "analyzing",
+                                log=f"🔍 Analyzed {i}/{total} stocks…")
+            elif i % 2 == 0:
                 update_progress(task_id, i, total, "analyzing")
             
             if symbol not in all_data.columns:
@@ -331,6 +469,18 @@ def generate_html(df, output_file="momentum_report_v3.html"):
         f.write(html_template)
     print(f"\nDashboard V3 generated: {output_file}")
 
+INPUT_FILES = [
+    "market cap greater than 10000.csv",   # choice 0 → 10k Cap
+    "market cap greater than 20000csv.csv", # choice 1 → 20k Cap
+    "ind_nifty500list.csv",                 # choice 2 → Nifty 500
+]
+OUTPUT_FILES = [
+    "momentum_report_v3_10k.html",
+    "momentum_report_v3_20k.html",
+    "momentum_report_v3_nifty500.html",
+]
+CHOICE_LABELS = ["10k Cap", "20k Cap", "Nifty 500"]
+
 if __name__ == "__main__":
     import sys
     # Default to 20000 (index 1) if no argument provided
@@ -340,15 +490,18 @@ if __name__ == "__main__":
             choice = int(sys.argv[1])
         except:
             pass
-            
+
     task_id = f"v3_{choice}"
     if 0 <= choice < len(INPUT_FILES):
         selected_file = INPUT_FILES[choice]
+        output_file   = OUTPUT_FILES[choice]
+        label         = CHOICE_LABELS[choice]
         if os.path.exists(selected_file):
-            print(f"Running V3 Analysis on {selected_file}...")
+            print(f"Running V3 Analysis on {selected_file} ({label})...")
             results_df = process_file(selected_file, task_id)
-            generate_html(results_df)
-            update_progress(task_id, 100, 100, "completed")
+            generate_html(results_df, output_file=output_file)
+            update_progress(task_id, 100, 100, "completed",
+                            log=f"✅ Done! Report saved → {output_file}")
         else:
             update_progress(task_id, 0, 0, "error", f"File {selected_file} not found")
             print(f"Error: {selected_file} not found.")

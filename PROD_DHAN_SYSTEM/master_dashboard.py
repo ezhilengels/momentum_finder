@@ -15,6 +15,10 @@ app = Flask(__name__)
 ROOT_DIR = os.path.join(os.path.dirname(__file__), '..')
 PROGRESS_FILE = os.path.join(ROOT_DIR, 'progress.json')
 
+# ── Ensure required runtime directories exist (Railway ephemeral FS) ──────────
+for _d in ["output", "cache", os.path.join("cache", "sector_tracker")]:
+    os.makedirs(os.path.join(ROOT_DIR, _d), exist_ok=True)
+
 # Initialize progress file
 if not os.path.exists(PROGRESS_FILE):
     with open(PROGRESS_FILE, "w") as f:
@@ -25,14 +29,49 @@ PORTFOLIOS = [
     ("momentum2", "Momentum2"),
 ]
 
+_STALE_MINUTES = 30   # tasks older than this are treated as dead
+
+def _is_stale(task_time_str: str) -> bool:
+    """Return True if task's HH:MM:SS timestamp is > _STALE_MINUTES ago."""
+    try:
+        now   = datetime.now()
+        t     = datetime.strptime(task_time_str, "%H:%M:%S").replace(
+                    year=now.year, month=now.month, day=now.day)
+        diff  = (now - t).total_seconds()
+        # Handle midnight rollover: if diff is negative, add 24h
+        if diff < 0:
+            diff += 86400
+        return diff > _STALE_MINUTES * 60
+    except Exception:
+        return True   # unparseable → treat as stale
+
+
 def read_progress():
     if not os.path.exists(PROGRESS_FILE):
         return {}
     with open(PROGRESS_FILE, "r") as f:
         try:
-            return json.load(f)
-        except:
+            data = json.load(f)
+        except Exception:
             return {}
+
+    # Mark any stuck "downloading/analyzing" tasks that are stale as interrupted
+    changed = False
+    for task_id, task in data.items():
+        if task.get("status") in ("downloading", "analyzing", "running"):
+            if _is_stale(task.get("time", "")):
+                task["status"]  = "error"
+                task["error"]   = "Process interrupted (stale)"
+                changed = True
+
+    if changed:
+        try:
+            with open(PROGRESS_FILE, "w") as f:
+                json.dump(data, f)
+        except Exception:
+            pass
+
+    return data
 
 def get_portfolio_data(portfolio_key):
     """Fetch live data using Universal Engine (yfinance)"""
@@ -109,8 +148,52 @@ def index():
 
 @app.route("/report/<version>")
 def view_report(version):
-    filename = f"momentum_report_{version}.html" if version != "v1" else "momentum_report.html"
-    return send_from_directory(ROOT_DIR, filename)
+    """Serve the most recently generated report for the given version (v1/v2/v3)."""
+    import glob
+    # Look for per-choice files first (newest wins), fallback to legacy single file
+    pattern = os.path.join(ROOT_DIR, f"momentum_report_{version}_*.html")
+    candidates = sorted(glob.glob(pattern), key=os.path.getmtime, reverse=True)
+    if candidates:
+        return send_from_directory(ROOT_DIR, os.path.basename(candidates[0]))
+    # Legacy fallback
+    legacy = "momentum_report.html" if version == "v1" else f"momentum_report_{version}.html"
+    legacy_path = os.path.join(ROOT_DIR, legacy)
+    if os.path.exists(legacy_path):
+        return send_from_directory(ROOT_DIR, legacy)
+    return f"<html><body style='font-family:sans-serif;padding:40px'>" \
+           f"<h2>📊 No {version.upper()} report yet</h2>" \
+           f"<p>Run an analysis from the dashboard first.</p>" \
+           f"<p><a href='/'>← Back to Portfolio</a></p></body></html>"
+
+@app.route("/report/<version>/<choice>")
+def view_report_choice(version, choice):
+    """Serve a specific choice report: /report/v2/10k, /report/v2/20k, /report/v2/nifty500"""
+    filename = f"momentum_report_{version}_{choice}.html"
+    full_path = os.path.join(ROOT_DIR, filename)
+    if os.path.exists(full_path):
+        return send_from_directory(ROOT_DIR, filename)
+    return f"<html><body style='font-family:sans-serif;padding:40px'>" \
+           f"<h2>Report not found</h2><p>{filename} hasn't been generated yet.</p>" \
+           f"<p><a href='/'>← Back</a></p></body></html>"
+
+@app.route("/sector")
+def view_sector():
+    """Serve the latest sector tracker HTML report."""
+    import glob, os
+    output_dir = os.path.join(ROOT_DIR, "output")
+    reports = sorted(glob.glob(os.path.join(output_dir, "sector_report_*.html")), reverse=True)
+    if reports:
+        return send_from_directory(output_dir, os.path.basename(reports[0]))
+    return "<html><body style='font-family:sans-serif;padding:40px'>" \
+           "<h2>📊 Sector Report Not Yet Generated</h2>" \
+           "<p>Run the sector tracker first: <code>python sector_tracker_v2.py --mode eod</code></p>" \
+           "<p><a href='/'>← Back to Portfolio</a></p></body></html>"
+
+@app.route("/run_sector", methods=["POST"])
+def run_sector():
+    sector_path = os.path.join(ROOT_DIR, 'sector_tracker_v2.py')
+    subprocess.Popen([sys.executable, sector_path, '--mode', 'eod'], cwd=ROOT_DIR)
+    return redirect(url_for('index'))
 
 @app.route("/api/progress")
 def progress_api():
@@ -236,9 +319,9 @@ HTML_TEMPLATE = """
         .stat-value { font-size: 24px; font-weight: 800; margin-top: 8px; letter-spacing: -0.03em; }
 
         /* Control Grid for Analysis Buttons */
-        .control-grid {
+        .control-grid { /* 4 equal columns: V1 V2 V3 Sector */
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: repeat(4, 1fr);
             gap: 20px;
             margin-bottom: 32px;
         }
@@ -321,6 +404,7 @@ HTML_TEMPLATE = """
             min-height: 18px;
         }
         .progress-track {
+            display: none;   /* hidden by default; JS shows it only when running/complete */
             width: 100%;
             height: 12px;
             border-radius: 999px;
@@ -341,6 +425,24 @@ HTML_TEMPLATE = """
             justify-content: space-between;
             gap: 8px;
         }
+
+        /* Live terminal log box */
+        .log-box {
+            margin-top: 10px;
+            background: #0f172a;
+            border-radius: 10px;
+            padding: 8px 10px;
+            max-height: 110px;
+            overflow-y: auto;
+            display: none;           /* hidden when idle */
+            font-family: 'Menlo', 'Consolas', monospace;
+            font-size: 11px;
+            line-height: 1.6;
+            color: #94a3b8;
+        }
+        .log-box.active { display: block; }
+        .log-line { white-space: pre-wrap; word-break: break-all; }
+        .log-line:last-child { color: #34d399; }  /* last line highlighted green */
 
         /* Modern Card Styling */
         .card { 
@@ -519,6 +621,7 @@ HTML_TEMPLATE = """
                 <a href="/report/v1" target="view_frame" class="nav-btn">V1 Core</a>
                 <a href="/report/v2" target="view_frame" class="nav-btn">V2 Alpha</a>
                 <a href="/report/v3" target="view_frame" class="nav-btn">V3 Ultimate</a>
+                <a href="/sector" target="view_frame" class="nav-btn">📊 Sectors</a>
             </div>
         </div>
         <div style="display: flex; align-items: center; gap: 24px;">
@@ -567,6 +670,7 @@ HTML_TEMPLATE = """
                             <span id="pct-v1">0%</span>
                             <span id="time-v1">No recent run</span>
                         </div>
+                        <div class="log-box" id="log-v1"></div>
                     </div>
                 </div>
                 <!-- V2 Controls -->
@@ -585,6 +689,7 @@ HTML_TEMPLATE = """
                             <span id="pct-v2">0%</span>
                             <span id="time-v2">No recent run</span>
                         </div>
+                        <div class="log-box" id="log-v2"></div>
                     </div>
                 </div>
                 <!-- V3 Controls -->
@@ -603,6 +708,30 @@ HTML_TEMPLATE = """
                             <span id="pct-v3">0%</span>
                             <span id="time-v3">No recent run</span>
                         </div>
+                        <div class="log-box" id="log-v3"></div>
+                    </div>
+                </div>
+
+                <!-- Sector Tracker -->
+                <div class="control-card">
+                    <h3>📊 SECTOR TRACKER</h3>
+                    <div class="btn-stack">
+                        <form action="/run_sector" method="POST">
+                            <button type="submit" class="btn-run" style="background:#0f766e">Run EOD Report</button>
+                        </form>
+                        <a href="/sector" target="view_frame" style="display:block;text-align:center;margin-top:8px;padding:10px;background:#134e4a;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px">
+                            📂 Open Latest Report
+                        </a>
+                    </div>
+                    <div class="progress-panel" id="panel-sector">
+                        <div class="progress-label">Run Status</div>
+                        <div class="progress-copy" id="copy-sector">Idle</div>
+                        <div class="progress-track"><div class="progress-fill" id="fill-sector" style="background:#0f766e"></div></div>
+                        <div class="progress-meta">
+                            <span id="pct-sector">0%</span>
+                            <span id="time-sector">No recent run</span>
+                        </div>
+                        <div class="log-box" id="log-sector"></div>
                     </div>
                 </div>
             </div>
@@ -675,35 +804,62 @@ HTML_TEMPLATE = """
         const versionTasks = {
             v1: taskChoices.map(choice => `v1_${choice}`),
             v2: taskChoices.map(choice => `v2_${choice}`),
-            v3: taskChoices.map(choice => `v3_${choice}`)
+            v3: taskChoices.map(choice => `v3_${choice}`),
+            sector: []    // sector tasks are matched by prefix, not fixed IDs
         };
         const knownTaskIds = new Set(Object.values(versionTasks).flat());
 
-        function formatStatus(status) {
-            if (status === 'completed') return '✓ ANALYSIS COMPLETE';
-            if (status === 'downloading') return 'Fetching market data...';
-            if (status === 'analyzing') return 'Analysis in progress...';
-            if (status === 'error') return 'Run failed';
+        const STALE_MINUTES = 30;
+
+        // Returns true if HH:MM:SS timestamp is older than STALE_MINUTES
+        function isStale(timeStr) {
+            if (!timeStr) return true;
+            try {
+                const now  = new Date();
+                const [h, m, s] = timeStr.split(':').map(Number);
+                const t    = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m, s);
+                let diff   = (now - t) / 1000;
+                if (diff < 0) diff += 86400;   // midnight rollover
+                return diff > STALE_MINUTES * 60;
+            } catch (e) { return true; }
+        }
+
+        function formatStatus(status, taskId) {
+            if (status === 'completed')   return '✓ ANALYSIS COMPLETE';
+            if (status === 'error')       return '✗ Run failed / interrupted';
+            if (status === 'downloading') return '⏬ Fetching market data...';
+            if (status === 'downloaded')  return '✓ Data ready — starting analysis';
+            if (status === 'analyzing')   return '🔍 Calculating momentum scores...';
+            if (status === 'running')     return '⚙️ Running...';
             return 'Idle';
         }
 
         function prettifyTaskId(taskId) {
             if (!taskId) return '';
-            const [version, choice] = taskId.split('_');
+            if (taskId.startsWith('sector')) return 'Sector Tracker';
+            const parts  = taskId.split('_');
             const labels = { '0': '10k Cap', '1': '20k Cap', '2': 'Nifty 500' };
-            return `${version.toUpperCase()} · ${labels[choice] || choice}`;
+            return `${parts[0].toUpperCase()} · ${labels[parts[1]] || parts[1]}`;
         }
 
         function pickLatestTask(progressData, versionKey) {
-            const tasks = versionTasks[versionKey]
-                .map(taskId => ({ taskId, data: progressData[taskId] }))
-                .filter(item => item.data);
+            let tasks;
+            if (versionKey === 'sector') {
+                // Match any key that starts with "sector"
+                tasks = Object.entries(progressData)
+                    .filter(([id]) => id.startsWith('sector'))
+                    .map(([taskId, data]) => ({ taskId, data }));
+            } else {
+                tasks = (versionTasks[versionKey] || [])
+                    .map(taskId => ({ taskId, data: progressData[taskId] }))
+                    .filter(item => item.data);
+            }
 
             if (!tasks.length) return null;
 
             if (selectedRun && selectedRun.startsWith(versionKey + '_')) {
-                const selectedTask = tasks.find(item => item.taskId === selectedRun);
-                if (selectedTask) return selectedTask;
+                const sel = tasks.find(item => item.taskId === selectedRun);
+                if (sel) return sel;
             }
 
             tasks.sort((a, b) => (a.data.time || '').localeCompare(b.data.time || ''));
@@ -711,44 +867,84 @@ HTML_TEMPLATE = """
         }
 
         function updateProgressCard(versionKey, task) {
-            const copyEl = document.getElementById(`copy-${versionKey}`);
-            const fillEl = document.getElementById(`fill-${versionKey}`);
-            const pctEl = document.getElementById(`pct-${versionKey}`);
-            const timeEl = document.getElementById(`time-${versionKey}`);
+            const copyEl  = document.getElementById(`copy-${versionKey}`);
+            const fillEl  = document.getElementById(`fill-${versionKey}`);
+            const pctEl   = document.getElementById(`pct-${versionKey}`);
+            const timeEl  = document.getElementById(`time-${versionKey}`);
+            const logEl   = document.getElementById(`log-${versionKey}`);
+            const trackEl = fillEl ? fillEl.parentElement : null;
 
             if (!task) {
                 copyEl.innerText = 'Idle';
-                fillEl.style.width = '0%';
+                if (trackEl) trackEl.style.display = 'none';
                 pctEl.innerText = '0%';
                 timeEl.innerText = 'No recent run';
+                if (logEl) { logEl.innerHTML = ''; logEl.classList.remove('active'); }
                 return;
             }
 
-            const data = task.data || {};
+            const data    = task.data || {};
+            const status  = data.status || 'running';
+            const taskTime = data.time || '';
+
+            // Treat stale "running" tasks as interrupted — don't show fake progress
+            const effectiveStatus = (
+                ['downloading','analyzing','running'].includes(status) && isStale(taskTime)
+            ) ? 'error' : status;
+
             const current = Number(data.current || 0);
-            const total = Number(data.total || 0);
-            const status = data.status || 'running';
-            const pct = status === 'completed' ? 100 : (total > 0 ? Math.max(0, Math.min(100, Math.round((current / total) * 100))) : 0);
+            const total   = Number(data.total   || 0);
+            const pct = effectiveStatus === 'completed'
+                ? 100
+                : (total > 0 ? Math.max(0, Math.min(99, Math.round((current / total) * 100))) : 0);
 
-            copyEl.innerText = formatStatus(status);
-            fillEl.style.width = `${pct}%`;
-            pctEl.innerText = `${pct}%`;
+            // Show bar only when actively running or completed
+            const showBar = ['downloading','analyzing','running','completed'].includes(effectiveStatus);
+            if (trackEl) trackEl.style.display = showBar ? '' : 'none';
 
-            if (status === 'error' && data.error) {
-                timeEl.innerText = data.error;
-            } else if (status === 'completed') {
-                const reportLabel = versionKey.toUpperCase();
-                timeEl.innerText = `Updated ${data.time || '--'} · Open ${reportLabel} tab`;
+            copyEl.innerText  = formatStatus(effectiveStatus, task.taskId);
+            if (fillEl) fillEl.style.width = `${pct}%`;
+            pctEl.innerText   = showBar ? `${pct}%` : '';
+
+            if (effectiveStatus === 'error') {
+                const msg = data.error || 'Process interrupted';
+                timeEl.innerText = `✗ ${msg.replace('Process interrupted (stale)', 'Interrupted — click to re-run')}`;
+            } else if (effectiveStatus === 'completed') {
+                const label = versionKey === 'sector' ? 'Sectors' : versionKey.toUpperCase();
+                timeEl.innerText = `✓ Updated ${taskTime} · Open ${label} tab`;
             } else {
-                timeEl.innerText = `Last update ${data.time || '--'}`;
+                // Active: show step counts
+                const stepInfo = total > 0 ? ` (${current}/${total})` : '';
+                timeEl.innerText = `Last update ${taskTime}${stepInfo}`;
+            }
+
+            // ── Live terminal log ──
+            if (logEl) {
+                const logs = data.logs || [];
+                const isActive = ['downloading','analyzing','running'].includes(effectiveStatus)
+                              && !isStale(taskTime);
+                if (logs.length > 0 && (isActive || effectiveStatus === 'error')) {
+                    logEl.classList.add('active');
+                    logEl.innerHTML = logs
+                        .map(l => `<div class="log-line">${l.replace(/</g,'&lt;')}</div>`)
+                        .join('');
+                    // Auto-scroll to bottom
+                    logEl.scrollTop = logEl.scrollHeight;
+                } else {
+                    logEl.innerHTML = '';
+                    logEl.classList.remove('active');
+                }
             }
         }
 
         function getActiveTask(progressData) {
             const activeTasks = Object.entries(progressData)
                 .map(([taskId, data]) => ({ taskId, data: data || {} }))
-                .filter(item => knownTaskIds.has(item.taskId))
-                .filter(item => ['downloading', 'analyzing', 'running'].includes(item.data.status));
+                // Include v1/v2/v3 known IDs + any sector_ prefixed task
+                .filter(item => knownTaskIds.has(item.taskId) || item.taskId.startsWith('sector'))
+                .filter(item => ['downloading', 'analyzing', 'running'].includes(item.data.status))
+                // Only count as active if NOT stale (otherwise buttons stay locked forever)
+                .filter(item => !isStale(item.data.time || ''));
 
             if (!activeTasks.length) return null;
 
@@ -790,6 +986,8 @@ HTML_TEMPLATE = """
                 ['v1', 'v2', 'v3'].forEach(versionKey => {
                     updateProgressCard(versionKey, pickLatestTask(progressData, versionKey));
                 });
+                // Sector tracker progress (task keys start with "sector_v2_")
+                updateProgressCard('sector', pickLatestTask(progressData, 'sector'));
             } catch (error) {
                 console.error('Progress refresh failed', error);
             }
@@ -854,6 +1052,52 @@ HTML_TEMPLATE = """
 </html>
 """
 
+# ── Optional: start Telegram bot in background thread if token is present ─────
+def _start_telegram_bot():
+    """Run master_bot in a daemon thread so gunicorn stays the main process."""
+    import threading, importlib.util, pathlib
+    bot_path = pathlib.Path(__file__).parent / "master_bot.py"
+    if not bot_path.exists():
+        return
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    if not token:
+        print("ℹ️  TELEGRAM_BOT_TOKEN not set — Telegram bot disabled.")
+        return
+    try:
+        import telebot
+        from apscheduler.schedulers.background import BackgroundScheduler
+        import datetime as _dt
+
+        bot = telebot.TeleBot(token)
+        chat_id = os.getenv("TELEGRAM_CHAT_ID")
+
+        def _scheduled():
+            if not chat_id:
+                return
+            try:
+                symbols = [s['symbol'] for p in [("core",), ("momentum2",)] for s in engine.read_portfolio(p[0])]
+                quotes = engine.get_market_quote(symbols)
+                lines = [f"{sym}: {quotes.get(sym, {}).get('ltp', 'N/A')}" for sym in symbols[:10]]
+                bot.send_message(chat_id, "📊 Scheduled update:\n" + "\n".join(lines))
+            except Exception as e:
+                print(f"Bot scheduled update error: {e}")
+
+        sched = BackgroundScheduler()
+        sched.add_job(_scheduled, 'cron', hour=9,  minute=0,  timezone='Asia/Kolkata')
+        sched.add_job(_scheduled, 'cron', hour=15, minute=15, timezone='Asia/Kolkata')
+        sched.start()
+
+        def _poll():
+            print("✅ Telegram bot polling started (background thread).")
+            bot.infinity_polling(none_stop=True, timeout=30)
+
+        t = threading.Thread(target=_poll, daemon=True, name="telegram-bot")
+        t.start()
+    except Exception as e:
+        print(f"⚠️  Could not start Telegram bot: {e}")
+
+_start_telegram_bot()
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5001))
-    app.run(host='0.0.0.0', port=port, debug=True)
+    app.run(host='0.0.0.0', port=port, debug=False)

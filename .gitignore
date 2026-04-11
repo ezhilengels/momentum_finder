@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+venv/
+env/
+.venv/
+.env/
+
+# Environment / secrets
+.env
+*.env
+
+# Runtime data (regenerated on each run — do NOT commit)
+progress.json
+portfolio_cache.json
+
+# Large generated HTML reports (regenerated on each run)
+output/
+momentum_report*.html
+test_momentum_report.html
+
+# Parquet cache (regenerated from live data)
+cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Logs
+*.log

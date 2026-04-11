@@ -1,0 +1,7 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "gunicorn --bind 0.0.0.0:$PORT --timeout 120 --workers 1 PROD_DHAN_SYSTEM.master_dashboard:app"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
